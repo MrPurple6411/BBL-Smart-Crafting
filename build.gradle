@@ -63,7 +63,7 @@ neoForge {
     }
 
     mods {
-        template {
+        smartcrafting {
             sourceSet sourceSets.main
         }
     }
@@ -78,8 +78,8 @@ configurations {
 dependencies {
 
     //BBL Core
-    compileOnly "curse.maven:bbl-core-1135181:6679405"
-    runtimeOnly "curse.maven:bbl-core-1135181:6679405"
+    compileOnly "curse.maven:bbl-core-1135181:6240092"
+    runtimeOnly "curse.maven:bbl-core-1135181:6240092"
 
 }
 
