@@ -3,15 +3,14 @@ package com.benbenlaw.smartcrafting.networking.packets;
 import com.benbenlaw.smartcrafting.networking.payload.SmartCraftingRecipePayload;
 import com.benbenlaw.smartcrafting.screen.SmartCraftingMenu;
 import com.benbenlaw.smartcrafting.screen.SmartCraftingScreen;
-import com.benbenlaw.smartcrafting.util.ClientCraftingRecipeCache;
-import com.benbenlaw.smartcrafting.util.SimpleRecipeHolder;
 import net.minecraft.client.Minecraft;
-import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.item.crafting.CraftingRecipe;
 import net.minecraft.world.item.crafting.RecipeHolder;
+import net.minecraft.world.level.Level;
 import net.neoforged.neoforge.network.handling.IPayloadContext;
 
-import java.util.*;
+import java.util.List;
+import java.util.Optional;
 
 public record SmartCraftingRecipePacket() {
 
@@ -22,30 +21,27 @@ public record SmartCraftingRecipePacket() {
     }
 
     public void handle(final SmartCraftingRecipePayload payload, IPayloadContext context) {
+        // Use current recipe manager
+        Level level = Minecraft.getInstance().level;
+        if (level == null) return;
+
+        // Resolve off-thread (not GUI)
+        List<RecipeHolder<CraftingRecipe>> resolvedRecipes = payload.recipeIds().stream()
+                .map(level.getRecipeManager()::byKey)
+                .filter(Optional::isPresent)
+                .map(Optional::get)
+                .filter(recipe -> recipe.value() instanceof CraftingRecipe)
+                .map(recipe -> (RecipeHolder<CraftingRecipe>) recipe)
+                .toList();
+
+        // Then update the screen on main thread
         Minecraft.getInstance().execute(() -> {
-            assert Minecraft.getInstance().player != null;
-            if (Minecraft.getInstance().player.containerMenu instanceof SmartCraftingMenu menu &&
+            if (Minecraft.getInstance().player != null &&
+                    Minecraft.getInstance().player.containerMenu instanceof SmartCraftingMenu menu &&
                     Minecraft.getInstance().screen instanceof SmartCraftingScreen screen) {
-
-                // Get the cache map
-                Map<ResourceLocation, CraftingRecipe> rawCache = ClientCraftingRecipeCache.cachedRecipes;
-
-                // Convert recipe IDs to SimpleRecipeHolders instead of raw CraftingRecipe
-                List<SimpleRecipeHolder> resolvedRecipeHolders = payload.recipeIds().stream()
-                        .map(id -> {
-                            CraftingRecipe recipe = ClientCraftingRecipeCache.getRecipe(id);
-                            if (recipe == null) return null;
-                            return new SimpleRecipeHolder(id, recipe);
-                        })
-                        .filter(Objects::nonNull)
-                        .toList();
-
-                // Pass the wrapped recipes to the screen
-                screen.setClientRecipes(resolvedRecipeHolders);
+                screen.setClientRecipes(resolvedRecipes);
             }
         });
     }
-
-
 
 }

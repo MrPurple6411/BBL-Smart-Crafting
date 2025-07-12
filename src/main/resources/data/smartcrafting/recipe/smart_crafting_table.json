@@ -1,0 +1,22 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "category": "misc",
+  "group": "smart_crafting_table",
+  "key": {
+    "A": {
+      "tag": "c:rods/wooden"
+    },
+    "C": {
+      "tag": "c:player_workstations/crafting_tables"
+    }
+  },
+  "pattern": [
+    "CCC",
+    "A A",
+    "CCC"
+  ],
+  "result": {
+    "count": 1,
+    "id": "smartcrafting:smart_crafting_table"
+  }
+}

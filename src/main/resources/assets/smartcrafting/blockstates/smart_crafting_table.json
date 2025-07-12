@@ -1,0 +1,7 @@
+{
+  "variants": {
+    "": {
+      "model": "smartcrafting:block/smart_crafting_table"
+    }
+  }
+}

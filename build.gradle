@@ -5,9 +5,10 @@ plugins {
     id 'eclipse'
     id 'idea'
     id 'maven-publish'
-    id 'net.neoforged.moddev' version '2.0.78'
+    id 'net.neoforged.gradle.userdev' version '7.0.165'
     id 'net.darkhax.curseforgegradle' version '1.1.24'
     id "com.modrinth.minotaur" version "2.+"
+
 }
 
 version = "${minecraft_version}-${mod_version}"
@@ -24,48 +25,33 @@ repositories {
         }
     }
 }
-
 base {
     archivesName = mod_id
 }
 
 java.toolchain.languageVersion = JavaLanguageVersion.of(21)
 
-neoForge {
-    version = project.neo_version
-
-    parchment {
-        mappingsVersion = project.parchment_mappings_version
-        minecraftVersion = project.parchment_minecraft_version
+runs {
+    configureEach {
+        systemProperty 'forge.logging.markers', 'REGISTRIES'
+        systemProperty 'forge.logging.console.level', 'debug'
+        modSource project.sourceSets.main
     }
 
-    runs {
-        configureEach {
-            systemProperty 'forge.logging.markers', 'REGISTRIES'
-            systemProperty 'forge.logging.console.level', 'debug'
-        }
-
-        client {
-            client()
-            systemProperty 'forge.enabledGameTestNamespaces', project.mod_id
-        }
-
-        server {
-            server()
-            systemProperty 'forge.enabledGameTestNamespaces', project.mod_id
-            programArgument '--nogui'
-        }
-
-        data {
-            clientData()
-            programArguments.addAll '--mod', project.mod_id, '--all', '--output', file('src/generated/resources/').getAbsolutePath(), '--existing', file('src/main/resources/').getAbsolutePath()
-        }
+    client {
+        systemProperty 'forge.enabledGameTestNamespaces', project.mod_id
     }
 
-    mods {
-        smartcrafting {
-            sourceSet sourceSets.main
-        }
+    server {
+        systemProperty 'forge.enabledGameTestNamespaces', project.mod_id
+        arguments '--nogui'  // change here
+    }
+    gameTestServer {
+        systemProperty 'forge.enabledGameTestNamespaces', project.mod_id
+    }
+
+    data {
+        arguments '--mod', project.mod_id, '--all', '--output', file('src/generated/resources/').getAbsolutePath(), '--existing', file('src/main/resources/').getAbsolutePath()
     }
 }
 
@@ -75,7 +61,10 @@ configurations {
     runtimeClasspath.extendsFrom localRuntime
 }
 
+
 dependencies {
+
+    implementation "net.neoforged:neoforge:${neo_version}"
 
     //BBL Core
     compileOnly "curse.maven:bbl-core-1135181:6240092"
@@ -104,7 +93,6 @@ tasks.withType(ProcessResources).configureEach {
     }
 }
 
-// Example configuration to allow publishing using the maven-publish plugin
 publishing {
     publications {
         register('mavenJava', MavenPublication) {
@@ -130,7 +118,6 @@ tasks.withType(JavaCompile).configureEach {
     options.encoding = 'UTF-8' // Use the UTF-8 charset for Java compilation
 }
 
-// IDEA no longer automatically downloads sources/javadoc jars for dependencies, so we need to explicitly enable the behavior.
 idea {
     module {
         downloadSources = true

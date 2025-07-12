@@ -1,31 +1,29 @@
 package com.benbenlaw.smartcrafting.screen;
 
 import com.benbenlaw.smartcrafting.networking.payload.SmartCraftingRecipePayload;
-import com.benbenlaw.smartcrafting.screen.SmartCraftingMenus;
-import com.benbenlaw.smartcrafting.util.ClientCraftingRecipeCache;
-import com.benbenlaw.smartcrafting.util.SimpleRecipeHolder;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.NonNullList;
 import net.minecraft.network.FriendlyByteBuf;
-import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
-import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
-import net.minecraft.sounds.SoundEvent;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
-import net.minecraft.world.Container;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.entity.player.Player;
-import net.minecraft.world.inventory.*;
+import net.minecraft.world.inventory.AbstractContainerMenu;
+import net.minecraft.world.inventory.ContainerData;
+import net.minecraft.world.inventory.SimpleContainerData;
+import net.minecraft.world.inventory.Slot;
+import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.crafting.*;
 import net.minecraft.world.level.Level;
+import net.neoforged.neoforge.items.wrapper.PlayerInvWrapper;
 import net.neoforged.neoforge.network.PacketDistributor;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.*;
-import java.util.stream.Collectors;
+
 public class SmartCraftingMenu extends AbstractContainerMenu {
 
     protected Level level;
@@ -46,9 +44,9 @@ public class SmartCraftingMenu extends AbstractContainerMenu {
         this.level = inventory.player.level();
         this.data = data;
 
-        this.lastInventorySnapshot = NonNullList.withSize(player.getInventory().getNonEquipmentItems().size(), ItemStack.EMPTY);
-        for (int i = 0; i < player.getInventory().getNonEquipmentItems().size(); i++) {
-            this.lastInventorySnapshot.set(i, player.getInventory().getNonEquipmentItems().get(i).copy());
+        this.lastInventorySnapshot = NonNullList.withSize(player.getInventory().items.size(), ItemStack.EMPTY);
+        for (int i = 0; i < player.getInventory().items.size(); i++) {
+            this.lastInventorySnapshot.set(i, player.getInventory().items.get(i).copy());
         }
 
         if (!level.isClientSide) {
@@ -63,48 +61,33 @@ public class SmartCraftingMenu extends AbstractContainerMenu {
     }
 
     public void updateValidRecipes() {
-        if (level.isClientSide) return;
+        if (level.isClientSide) return; // Safety check
 
-        List<CraftingRecipe> validRecipes = getValidRecipes();
+        List<RecipeHolder<CraftingRecipe>> recipes = getValidRecipes();
 
-        // Since cachedRecipes is a Map<ResourceLocation, CraftingRecipe>,
-        // get the keys (IDs) for the valid recipes by matching recipe instances
-        List<ResourceLocation> recipeIds = validRecipes.stream()
-                .map(recipe -> {
-                    // Find the key by value
-                    for (Map.Entry<ResourceLocation, CraftingRecipe> entry : ClientCraftingRecipeCache.cachedRecipes.entrySet()) {
-                        if (entry.getValue() == recipe) {
-                            return entry.getKey();
-                        }
-                    }
-                    return null; // shouldn't happen if cache is consistent
-                })
-                .filter(Objects::nonNull)
+        List<ResourceLocation> recipeIds = recipes.stream()
+                .map(RecipeHolder::id)
                 .toList();
-
         sendRecipesToClient(recipeIds);
     }
-
 
     private void sendRecipesToClient(List<ResourceLocation> recipeIds) {
         SmartCraftingRecipePayload packet = new SmartCraftingRecipePayload(recipeIds);
         PacketDistributor.sendToPlayer((ServerPlayer) player, packet);
     }
 
-    public List<CraftingRecipe> getValidRecipes() {
-        if (level == null || player == null || level.isClientSide) {
-            return Collections.emptyList();
-        }
+    public List<RecipeHolder<CraftingRecipe>> getValidRecipes() {
+        if (level.isClientSide) return Collections.emptyList();
 
+        RecipeManager rm = level.getRecipeManager();
+        List<RecipeHolder<CraftingRecipe>> allRecipes = rm.getAllRecipesFor(RecipeType.CRAFTING);
         Inventory inv = player.getInventory();
 
-        return ClientCraftingRecipeCache.getRecipeHolders().stream()
-                .map(SimpleRecipeHolder::value)  // unwrap CraftingRecipe from your SimpleRecipeHolder
-                .filter(recipe -> canCraftFromInventory(recipe, inv))
+        return allRecipes.stream()
+                .filter(holder -> recipeHasMatchingIngredients(holder.value(), inv)) // <-- New pre-filter
+                .filter(holder -> canCraftFromInventory(holder.value(), inv))
                 .toList();
     }
-
-
 
     private boolean canCraftFromInventory(CraftingRecipe recipe, Inventory inv) {
         CraftingInput input = buildCraftingInputForRecipe(recipe, inv);
@@ -113,7 +96,7 @@ public class SmartCraftingMenu extends AbstractContainerMenu {
 
     private CraftingInput buildCraftingInputForRecipe(CraftingRecipe recipe, Inventory inv) {
         NonNullList<ItemStack> grid = NonNullList.withSize(9, ItemStack.EMPTY);
-        List<Ingredient> ingredients = recipe.placementInfo().ingredients();
+        List<Ingredient> ingredients = recipe.getIngredients();
         int[] usedSlots = new int[inv.getContainerSize()];
 
         if (recipe instanceof ShapedRecipe shaped) {
@@ -171,33 +154,25 @@ public class SmartCraftingMenu extends AbstractContainerMenu {
     public void craftRecipeById(ResourceLocation recipeId, boolean shiftClick) {
         if (level.isClientSide) return;
 
-        CraftingRecipe targetRecipe = ClientCraftingRecipeCache.getRecipe(recipeId);
-        if (targetRecipe == null) return;
+        RecipeManager rm = level.getRecipeManager();
+        Optional<RecipeHolder<?>> optionalRecipe = rm.byKey(recipeId);
+        if (optionalRecipe.isEmpty()) return;
 
-        int maxCrafts = shiftClick ? getMaxCraftableAmount(targetRecipe) : 1;
+        Recipe<?> recipe = optionalRecipe.get().value();
+        if (!(recipe instanceof CraftingRecipe craftingRecipe)) return;
+
+        int maxCrafts = shiftClick ? getMaxCraftableAmount(craftingRecipe) : 1;
+
+        // Build input once
+        CraftingInput input = buildCraftingInputForRecipe(craftingRecipe, player.getInventory());
 
         for (int i = 0; i < maxCrafts; i++) {
-            CraftingInput input = buildCraftingInputForRecipe(targetRecipe, player.getInventory());
+            if (!craftingRecipe.matches(input, level)) break;
 
-            if (!targetRecipe.matches(input, level)) break;
+            NonNullList<ItemStack> remainingItems = craftingRecipe.getRemainingItems(input);
 
-            NonNullList<ItemStack> remainingItems = targetRecipe.getRemainingItems(input);
-
-            for (int j = 0; j < targetRecipe.placementInfo().ingredients().size(); j++) {
-                Ingredient ingredient = targetRecipe.placementInfo().ingredients().get(j);
-                if (ingredient.isEmpty()) continue;
-
-                for (int k = 0; k < player.getInventory().getContainerSize(); k++) {
-                    ItemStack stack = player.getInventory().getItem(k);
-                    if (ingredient.test(stack)) {
-                        stack.shrink(1);
-                        if (stack.isEmpty()) {
-                            player.getInventory().setItem(k, ItemStack.EMPTY);
-                        }
-                        break;
-                    }
-                }
-            }
+            // Consume ingredients in bulk (improved approach below)
+            if (!consumeIngredients(craftingRecipe, player.getInventory())) break;
 
             for (ItemStack remainder : remainingItems) {
                 if (!remainder.isEmpty() && !player.getInventory().add(remainder)) {
@@ -205,7 +180,7 @@ public class SmartCraftingMenu extends AbstractContainerMenu {
                 }
             }
 
-            ItemStack result = targetRecipe.assemble(input, level.registryAccess());
+            ItemStack result = craftingRecipe.assemble(input, level.registryAccess());
             player.getInventory().placeItemBackInInventory(result);
         }
 
@@ -215,30 +190,79 @@ public class SmartCraftingMenu extends AbstractContainerMenu {
         updateValidRecipes();
     }
 
+    private boolean consumeIngredients(CraftingRecipe recipe, Inventory inventory) {
+        List<Ingredient> ingredients = recipe.getIngredients();
+        int[] usedSlots = new int[inventory.getContainerSize()];
+
+        // Verify all ingredients can be satisfied
+        for (Ingredient ingredient : ingredients) {
+            boolean found = false;
+            for (int i = 0; i < inventory.getContainerSize(); i++) {
+                ItemStack stack = inventory.getItem(i);
+                if (!stack.isEmpty() && ingredient.test(stack) && usedSlots[i] < stack.getCount()) {
+                    found = true;
+                    usedSlots[i]++;
+                    break;
+                }
+            }
+            if (!found) return false; // Can't satisfy this ingredient
+        }
+
+        // Consume items
+        usedSlots = new int[inventory.getContainerSize()]; // Reset to do actual consumption
+        for (Ingredient ingredient : ingredients) {
+            for (int i = 0; i < inventory.getContainerSize(); i++) {
+                ItemStack stack = inventory.getItem(i);
+                if (!stack.isEmpty() && ingredient.test(stack) && usedSlots[i] < stack.getCount()) {
+                    stack.shrink(1);
+                    if (stack.isEmpty()) {
+                        inventory.setItem(i, ItemStack.EMPTY);
+                    }
+                    usedSlots[i]++;
+                    break;
+                }
+            }
+        }
+
+        return true;
+    }
+
+
+    private boolean recipeHasMatchingIngredients(CraftingRecipe recipe, Inventory inv) {
+        for (Ingredient ingredient : recipe.getIngredients()) {
+            if (ingredient.isEmpty()) continue;
+            boolean found = false;
+            for (ItemStack stack : inv.items) {
+                if (!stack.isEmpty() && ingredient.test(stack)) {
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) return false;
+        }
+        return true;
+    }
 
     private int getMaxCraftableAmount(CraftingRecipe recipe) {
         Inventory inv = player.getInventory();
         int max = Integer.MAX_VALUE;
 
-        for (Ingredient ingredient : recipe.placementInfo().ingredients()) {
+        for (Ingredient ingredient : recipe.getIngredients()) {
             if (ingredient.isEmpty()) continue;
 
             int count = 0;
-            for (ItemStack stack : inv.getNonEquipmentItems()) {
+            for (ItemStack stack : inv.items) {
                 if (ingredient.test(stack)) {
                     count += stack.getCount();
                 }
             }
 
-            int possible = count / 1; // Each ingredient needed once per craft
-            if (possible < max) {
-                max = possible;
-            }
+            max = Math.min(max, count);
         }
 
-        // Avoid infinite loops due to buggy recipes
         return Math.max(0, Math.min(max, 64));
     }
+
 
     @Override
     public void broadcastChanges() {
@@ -247,7 +271,7 @@ public class SmartCraftingMenu extends AbstractContainerMenu {
         if (level.isClientSide) return;
 
         boolean changed = false;
-        List<ItemStack> current = player.getInventory().getNonEquipmentItems();
+        List<ItemStack> current = player.getInventory().items;
 
         for (int i = 0; i < current.size(); i++) {
             ItemStack oldStack = lastInventorySnapshot.get(i);
