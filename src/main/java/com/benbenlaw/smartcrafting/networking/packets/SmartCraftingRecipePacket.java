@@ -6,6 +6,7 @@ import com.benbenlaw.smartcrafting.screen.SmartCraftingScreen;
 import net.minecraft.client.Minecraft;
 import net.minecraft.world.item.crafting.CraftingRecipe;
 import net.minecraft.world.item.crafting.RecipeHolder;
+import net.minecraft.world.item.crafting.StonecutterRecipe;
 import net.minecraft.world.level.Level;
 import net.neoforged.neoforge.network.handling.IPayloadContext;
 
@@ -20,26 +21,29 @@ public record SmartCraftingRecipePacket() {
         return INSTANCE;
     }
 
+
+    // Resolve off-thread (not GUI)
     public void handle(final SmartCraftingRecipePayload payload, IPayloadContext context) {
-        // Use current recipe manager
         Level level = Minecraft.getInstance().level;
         if (level == null) return;
 
         // Resolve off-thread (not GUI)
-        List<RecipeHolder<CraftingRecipe>> resolvedRecipes = payload.recipeIds().stream()
+        List<? extends RecipeHolder<?>> resolvedRecipes = payload.recipeIds().stream()
                 .map(level.getRecipeManager()::byKey)
                 .filter(Optional::isPresent)
                 .map(Optional::get)
-                .filter(recipe -> recipe.value() instanceof CraftingRecipe)
-                .map(recipe -> (RecipeHolder<CraftingRecipe>) recipe)
+                .filter(recipe -> {
+                    // Keep only crafting or stonecutting recipes
+                    return recipe.value() instanceof CraftingRecipe || recipe.value() instanceof StonecutterRecipe;
+                })
                 .toList();
 
-        // Then update the screen on main thread
+        // Update the screen on main thread
         Minecraft.getInstance().execute(() -> {
             if (Minecraft.getInstance().player != null &&
                     Minecraft.getInstance().player.containerMenu instanceof SmartCraftingMenu menu &&
                     Minecraft.getInstance().screen instanceof SmartCraftingScreen screen) {
-                screen.setClientRecipes(resolvedRecipes);
+                screen.setClientRecipes((List<RecipeHolder<?>>) resolvedRecipes);
             }
         });
     }

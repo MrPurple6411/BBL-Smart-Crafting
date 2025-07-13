@@ -1,8 +1,8 @@
 package com.benbenlaw.smartcrafting.screen;
 
-import com.benbenlaw.core.util.MouseUtil;
 import com.benbenlaw.smartcrafting.SmartCrafting;
 import com.benbenlaw.smartcrafting.networking.payload.SmartCraftingRecipeClickPayload;
+import com.benbenlaw.smartcrafting.util.MouseUtil;
 import com.mojang.blaze3d.systems.RenderSystem;
 import net.minecraft.ChatFormatting;
 import net.minecraft.client.Minecraft;
@@ -15,9 +15,7 @@ import net.minecraft.resources.ResourceLocation;
 import net.minecraft.util.Mth;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.item.ItemStack;
-import net.minecraft.world.item.crafting.CraftingRecipe;
-import net.minecraft.world.item.crafting.Ingredient;
-import net.minecraft.world.item.crafting.RecipeHolder;
+import net.minecraft.world.item.crafting.*;
 import net.neoforged.neoforge.network.PacketDistributor;
 import org.lwjgl.glfw.GLFW;
 
@@ -32,14 +30,17 @@ public class SmartCraftingScreen extends AbstractContainerScreen<SmartCraftingMe
     private static final ResourceLocation CRAFTING_TOOLTIP_TEXTURE =
             ResourceLocation.fromNamespaceAndPath(SmartCrafting.MOD_ID, "textures/gui/smart_crafting_table_render.png");
 
+    private static final ResourceLocation STONECUTTER_TOOLTIP_TEXTURE =
+            ResourceLocation.fromNamespaceAndPath(SmartCrafting.MOD_ID, "textures/gui/smart_crafting_table_stonecutter_render.png");
+
     static final ResourceLocation SCROLL_SPRITE =
             ResourceLocation.fromNamespaceAndPath(SmartCrafting.MOD_ID,"textures/gui/scroll.png");
 
-    private List<CraftingRecipe> recipes = Collections.emptyList();
+    private List<?> recipes = Collections.emptyList();
 
-    private List<RecipeHolder<CraftingRecipe>> clientRecipes = Collections.emptyList();
+    private List<RecipeHolder<?>> clientRecipes = Collections.emptyList();
 
-    public void setClientRecipes(List<RecipeHolder<CraftingRecipe>> recipes) {
+    public void setClientRecipes(List<RecipeHolder<?>> recipes) {
         this.clientRecipes = recipes;
         updateFilteredRecipes();
     }
@@ -65,7 +66,7 @@ public class SmartCraftingScreen extends AbstractContainerScreen<SmartCraftingMe
 
     private EditBox searchBox;
     private String lastSearchText = "";
-    private List<RecipeHolder<CraftingRecipe>> filteredRecipes = Collections.emptyList();
+    private List<RecipeHolder<?>> filteredRecipes = Collections.emptyList();
     private int dragOffsetY = 0;
 
     public SmartCraftingScreen(SmartCraftingMenu menu, Inventory inventory, Component title) {
@@ -171,7 +172,7 @@ public class SmartCraftingScreen extends AbstractContainerScreen<SmartCraftingMe
     }
 
     private void renderRecipeIcons(GuiGraphics guiGraphics, int mouseX, int mouseY) {
-        List<RecipeHolder<CraftingRecipe>> recipes = this.filteredRecipes;
+        List<RecipeHolder<?>> recipes = this.filteredRecipes;
 
         int xStart = (width - imageWidth) / 2 + 11;
         int yStart = (height - imageHeight) / 2 + 17;
@@ -191,7 +192,7 @@ public class SmartCraftingScreen extends AbstractContainerScreen<SmartCraftingMe
                 continue;
             }
 
-            RecipeHolder<CraftingRecipe> recipe = recipes.get(i);
+            RecipeHolder<?> recipe = recipes.get(i);
             assert Minecraft.getInstance().level != null;
 
             ItemStack resultStack = recipe.value().getResultItem(Minecraft.getInstance().level.registryAccess()).copy();
@@ -274,8 +275,8 @@ public class SmartCraftingScreen extends AbstractContainerScreen<SmartCraftingMe
         if (filteredRecipes.isEmpty() || hoveredRecipeIndex < 0 || hoveredRecipeIndex >= filteredRecipes.size()) {
             return;
         }
-        RecipeHolder<CraftingRecipe> recipeHolder = filteredRecipes.get(hoveredRecipeIndex);
-        CraftingRecipe recipe = recipeHolder.value();
+        RecipeHolder<?> recipeHolder = filteredRecipes.get(hoveredRecipeIndex);
+        Recipe<?> recipe = recipeHolder.value();
 
         List<Ingredient> ingredients = recipe.getIngredients();
 
@@ -293,22 +294,39 @@ public class SmartCraftingScreen extends AbstractContainerScreen<SmartCraftingMe
         int offsetX = 0;
         int offsetY = 0;
 
+        // Texture to use for tooltip
+        ResourceLocation tooltipTexture;
+
         if (recipe instanceof net.minecraft.world.item.crafting.ShapedRecipe shaped) {
             recipeWidth = shaped.getWidth();
             recipeHeight = shaped.getHeight();
             offsetX = (gridSize - recipeWidth) / 2;
             offsetY = (gridSize - recipeHeight) / 2;
+
+            tooltipTexture = CRAFTING_TOOLTIP_TEXTURE;
+        } else if (recipe instanceof StonecutterRecipe) {
+            recipeWidth = 1;
+            recipeHeight = 1;
+            offsetX = 1;
+            offsetY = 1;
+
+
+
+            tooltipTexture = STONECUTTER_TOOLTIP_TEXTURE;
+        } else {
+            tooltipTexture = CRAFTING_TOOLTIP_TEXTURE;
         }
 
         guiGraphics.pose().pushPose();
         guiGraphics.pose().translate(0, 0, 0);
 
+        // Size of the texture on the screen (adjust if needed)
         int texWidth = 64;
         int texHeight = 64;
 
-        RenderSystem.setShaderTexture(0, CRAFTING_TOOLTIP_TEXTURE);
+        RenderSystem.setShaderTexture(0, tooltipTexture);
         guiGraphics.blit(
-                CRAFTING_TOOLTIP_TEXTURE,
+                tooltipTexture,
                 tooltipX,
                 tooltipY,
                 0, 0,
@@ -335,7 +353,6 @@ public class SmartCraftingScreen extends AbstractContainerScreen<SmartCraftingMe
                             ItemStack[] matchingStacks = ing.getItems();
 
                             if (matchingStacks.length > 0) {
-                                // Try to find a match from player's inventory
                                 assert Minecraft.getInstance().player != null;
                                 for (ItemStack inventoryStack : Minecraft.getInstance().player.getInventory().items) {
                                     if (inventoryStack.isEmpty()) continue;
@@ -349,7 +366,6 @@ public class SmartCraftingScreen extends AbstractContainerScreen<SmartCraftingMe
                                     if (!matchedStack.isEmpty()) break;
                                 }
 
-                                // Fallback to first matching item
                                 if (matchedStack.isEmpty()) {
                                     matchedStack = matchingStacks[0];
                                 }
@@ -372,6 +388,7 @@ public class SmartCraftingScreen extends AbstractContainerScreen<SmartCraftingMe
 
         guiGraphics.pose().popPose();
     }
+
 
 
 

@@ -66,10 +66,6 @@ dependencies {
 
     implementation "net.neoforged:neoforge:${neo_version}"
 
-    //BBL Core
-    compileOnly "curse.maven:bbl-core-1135181:6240092"
-    runtimeOnly "curse.maven:bbl-core-1135181:6240092"
-
 }
 
 tasks.withType(ProcessResources).configureEach {

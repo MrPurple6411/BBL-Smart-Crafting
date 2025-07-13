@@ -10,14 +10,12 @@ import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.entity.player.Player;
-import net.minecraft.world.inventory.AbstractContainerMenu;
-import net.minecraft.world.inventory.ContainerData;
-import net.minecraft.world.inventory.SimpleContainerData;
-import net.minecraft.world.inventory.Slot;
+import net.minecraft.world.inventory.*;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.crafting.*;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.Blocks;
 import net.neoforged.neoforge.items.wrapper.PlayerInvWrapper;
 import net.neoforged.neoforge.network.PacketDistributor;
 import org.jetbrains.annotations.NotNull;
@@ -63,7 +61,7 @@ public class SmartCraftingMenu extends AbstractContainerMenu {
     public void updateValidRecipes() {
         if (level.isClientSide) return; // Safety check
 
-        List<RecipeHolder<CraftingRecipe>> recipes = getValidRecipes();
+        List<RecipeHolder<?>> recipes = getValidRecipes(); // Accept all recipe types
 
         List<ResourceLocation> recipeIds = recipes.stream()
                 .map(RecipeHolder::id)
@@ -76,22 +74,74 @@ public class SmartCraftingMenu extends AbstractContainerMenu {
         PacketDistributor.sendToPlayer((ServerPlayer) player, packet);
     }
 
-    public List<RecipeHolder<CraftingRecipe>> getValidRecipes() {
+    public List<RecipeHolder<?>> getValidRecipes() {
         if (level.isClientSide) return Collections.emptyList();
 
         RecipeManager rm = level.getRecipeManager();
-        List<RecipeHolder<CraftingRecipe>> allRecipes = rm.getAllRecipesFor(RecipeType.CRAFTING);
-        Inventory inv = player.getInventory();
+        List<RecipeHolder<CraftingRecipe>> craftingRecipes = rm.getAllRecipesFor(RecipeType.CRAFTING);
+        List<RecipeHolder<StonecutterRecipe>> stonecutterRecipes = rm.getAllRecipesFor(RecipeType.STONECUTTING);
 
-        return allRecipes.stream()
-                .filter(holder -> recipeHasMatchingIngredients(holder.value(), inv)) // <-- New pre-filter
+        Inventory inv = player.getInventory();
+        List<RecipeHolder<?>> allRecipes = new ArrayList<>();
+
+        // Crafting recipes always included
+        craftingRecipes.stream()
+                .filter(holder -> recipeHasMatchingIngredients(holder.value(), inv))
                 .filter(holder -> canCraftFromInventory(holder.value(), inv))
-                .toList();
+                .forEach(allRecipes::add);
+
+        // Check for nearby stonecutter
+        if (isStonecutterNearby(player)) {
+            stonecutterRecipes.stream()
+                    .filter(holder -> recipeHasMatchingIngredients(holder.value(), inv))
+                    .filter(holder -> canCraftStonecutterFromInventory(holder.value(), inv))
+                    .forEach(allRecipes::add);
+
+        }
+
+        return allRecipes;
+    }
+
+    private boolean isStonecutterNearby(Player player) {
+        final int radius = 3;
+        BlockPos playerPos = player.blockPosition();
+
+        for (int dx = -radius; dx <= radius; dx++) {
+            for (int dy = -2; dy <= 2; dy++) { // Vertical range - tweak as needed
+                for (int dz = -radius; dz <= radius; dz++) {
+                    BlockPos checkPos = playerPos.offset(dx, dy, dz);
+                    if (level.getBlockState(checkPos).is(Blocks.STONECUTTER)) {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
     }
 
     private boolean canCraftFromInventory(CraftingRecipe recipe, Inventory inv) {
         CraftingInput input = buildCraftingInputForRecipe(recipe, inv);
         return recipe.matches(input, level);
+    }
+
+    private boolean canCraftStonecutterFromInventory(StonecutterRecipe recipe, Inventory inv) {
+        List<Ingredient> ingredients = recipe.getIngredients();
+
+        for (Ingredient ingredient : ingredients) {
+            boolean found = false;
+            for (int i = 0; i < inv.getContainerSize(); i++) {
+                ItemStack stack = inv.getItem(i);
+                if (!stack.isEmpty() && ingredient.test(stack)) {
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                System.out.println("Missing ingredient for stonecutter recipe: " + recipe);
+                return false;
+            }
+        }
+        return true;
     }
 
     private CraftingInput buildCraftingInputForRecipe(CraftingRecipe recipe, Inventory inv) {
@@ -151,6 +201,7 @@ public class SmartCraftingMenu extends AbstractContainerMenu {
         return CraftingInput.ofPositioned(3, 3, grid).input();
     }
 
+
     public void craftRecipeById(ResourceLocation recipeId, boolean shiftClick) {
         if (level.isClientSide) return;
 
@@ -158,37 +209,86 @@ public class SmartCraftingMenu extends AbstractContainerMenu {
         Optional<RecipeHolder<?>> optionalRecipe = rm.byKey(recipeId);
         if (optionalRecipe.isEmpty()) return;
 
-        Recipe<?> recipe = optionalRecipe.get().value();
-        if (!(recipe instanceof CraftingRecipe craftingRecipe)) return;
+        Recipe<?> recipeHolder = optionalRecipe.get().value();
 
-        int maxCrafts = shiftClick ? getMaxCraftableAmount(craftingRecipe) : 1;
+        // Handle CraftingRecipe
+        if (recipeHolder instanceof CraftingRecipe craftingRecipe) {
+            int maxCrafts = shiftClick ? getMaxCraftableAmount(craftingRecipe) : 1;
 
-        // Build input once
-        CraftingInput input = buildCraftingInputForRecipe(craftingRecipe, player.getInventory());
+            for (int i = 0; i < maxCrafts; i++) {
+                CraftingInput input = buildCraftingInputForRecipe(craftingRecipe, player.getInventory());
 
-        for (int i = 0; i < maxCrafts; i++) {
-            if (!craftingRecipe.matches(input, level)) break;
+                if (!craftingRecipe.matches(input, level)) break;
 
-            NonNullList<ItemStack> remainingItems = craftingRecipe.getRemainingItems(input);
+                ItemStack result = craftingRecipe.assemble(input, level.registryAccess());
 
-            // Consume ingredients in bulk (improved approach below)
-            if (!consumeIngredients(craftingRecipe, player.getInventory())) break;
+                if (!player.getInventory().add(result.copy())) {
+                    player.drop(result.copy(), false);
+                }
 
-            for (ItemStack remainder : remainingItems) {
-                if (!remainder.isEmpty() && !player.getInventory().add(remainder)) {
-                    player.drop(remainder, false);
+                List<Ingredient> ingredients = craftingRecipe.getIngredients();
+                int[] usedSlots = new int[player.getInventory().getContainerSize()];
+
+                for (Ingredient ingredient : ingredients) {
+                    if (ingredient.isEmpty()) continue;
+
+                    boolean found = false;
+                    for (int slot = 0; slot < player.getInventory().getContainerSize(); slot++) {
+                        ItemStack stack = player.getInventory().getItem(slot);
+                        if (!stack.isEmpty() && ingredient.test(stack) && usedSlots[slot] < stack.getCount()) {
+                            stack.shrink(1);
+                            if (stack.isEmpty()) {
+                                player.getInventory().setItem(slot, ItemStack.EMPTY);
+                            }
+                            usedSlots[slot]++;
+                            found = true;
+                            break;
+                        }
+                    }
+
+                    if (!found) {
+                        return; // Can't satisfy ingredient, stop crafting
+                    }
+                }
+
+                NonNullList<ItemStack> remainders = craftingRecipe.getRemainingItems(input);
+                for (ItemStack remainder : remainders) {
+                    if (!remainder.isEmpty() && !player.getInventory().add(remainder)) {
+                        player.drop(remainder, false);
+                    }
                 }
             }
 
-            ItemStack result = craftingRecipe.assemble(input, level.registryAccess());
-            player.getInventory().placeItemBackInInventory(result);
+            player.playNotifySound(SoundEvents.LEVER_CLICK, SoundSource.PLAYERS, 1.0F, 1.0F);
+            player.getInventory().setChanged();
+            player.inventoryMenu.broadcastChanges();
+            updateValidRecipes();
+            return; // Done crafting craftingRecipe
         }
 
-        player.playNotifySound(SoundEvents.LEVER_CLICK, SoundSource.PLAYERS, 1.0F, 1.0F);
-        player.getInventory().setChanged();
-        player.inventoryMenu.broadcastChanges();
-        updateValidRecipes();
+        // Handle StonecutterRecipe
+        if (recipeHolder instanceof StonecutterRecipe stonecutterRecipe) {
+            int maxCrafts = shiftClick ? getMaxCraftableAmountStonecutter(stonecutterRecipe) : 1;
+
+            for (int i = 0; i < maxCrafts; i++) {
+                if (!canCraftStonecutterFromInventory(stonecutterRecipe, player.getInventory())) break;
+
+                ItemStack result = stonecutterRecipe.assemble(null, level.registryAccess()); // input param can be null
+
+                if (!player.getInventory().add(result.copy())) {
+                    player.drop(result.copy(), false);
+                }
+
+                if (!consumeIngredientsStonecutter(stonecutterRecipe, player.getInventory())) break;
+            }
+
+            player.playNotifySound(SoundEvents.LEVER_CLICK, SoundSource.PLAYERS, 1.0F, 1.0F);
+            player.getInventory().setChanged();
+            player.inventoryMenu.broadcastChanges();
+            updateValidRecipes();
+        }
     }
+
 
     private boolean consumeIngredients(CraftingRecipe recipe, Inventory inventory) {
         List<Ingredient> ingredients = recipe.getIngredients();
@@ -228,19 +328,40 @@ public class SmartCraftingMenu extends AbstractContainerMenu {
     }
 
 
-    private boolean recipeHasMatchingIngredients(CraftingRecipe recipe, Inventory inv) {
-        for (Ingredient ingredient : recipe.getIngredients()) {
-            if (ingredient.isEmpty()) continue;
-            boolean found = false;
-            for (ItemStack stack : inv.items) {
-                if (!stack.isEmpty() && ingredient.test(stack)) {
-                    found = true;
-                    break;
+    private boolean recipeHasMatchingIngredients(Recipe<?> recipe, Inventory inv) {
+
+        if (recipe instanceof CraftingRecipe craftingRecipe) {
+            for (Ingredient ingredient : craftingRecipe.getIngredients()) {
+                if (ingredient.isEmpty()) continue;
+                boolean found = false;
+                for (ItemStack stack : inv.items) {
+                    if (!stack.isEmpty() && ingredient.test(stack)) {
+                        found = true;
+                        break;
+                    }
                 }
+                if (!found) return false; // Missing ingredient
             }
-            if (!found) return false;
+            return true;
         }
-        return true;
+
+        else if (recipe instanceof StonecutterRecipe stonecutterRecipe) {
+            for (Ingredient ingredient : stonecutterRecipe.getIngredients()) {
+                if (ingredient.isEmpty()) continue;
+                boolean found = false;
+                for (ItemStack stack : inv.items) {
+                    if (!stack.isEmpty() && ingredient.test(stack)) {
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) return false;
+            }
+
+            return true;
+        }
+
+        return false;
     }
 
     private int getMaxCraftableAmount(CraftingRecipe recipe) {
@@ -262,6 +383,41 @@ public class SmartCraftingMenu extends AbstractContainerMenu {
 
         return Math.max(0, Math.min(max, 64));
     }
+
+    private boolean consumeIngredientsStonecutter(StonecutterRecipe recipe, Inventory inventory) {
+        Ingredient ingredient = recipe.getIngredients().get(0); // Usually just one ingredient for stonecutter
+        for (int i = 0; i < inventory.getContainerSize(); i++) {
+            ItemStack stack = inventory.getItem(i);
+            if (!stack.isEmpty() && ingredient.test(stack)) {
+                stack.shrink(1);
+                if (stack.isEmpty()) {
+                    inventory.setItem(i, ItemStack.EMPTY);
+                }
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private int getMaxCraftableAmountStonecutter(StonecutterRecipe recipe) {
+        Inventory inv = player.getInventory();
+        List<Ingredient> ingredients = recipe.getIngredients();
+
+        int max = Integer.MAX_VALUE;
+
+        for (Ingredient ingredient : ingredients) {
+            int count = 0;
+            for (ItemStack stack : inv.items) {
+                if (ingredient.test(stack)) {
+                    count += stack.getCount();
+                }
+            }
+            max = Math.min(max, count);
+        }
+
+        return Math.max(0, Math.min(max, 64));
+    }
+
 
 
     @Override
