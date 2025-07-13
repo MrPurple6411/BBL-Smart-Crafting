@@ -1,4 +1,8 @@
 Changelog Smart Crafting Table
 
+1.1.3
+Added JEI into mod dev environment
+
 1.1.2
 Remove BBL Core as a dependency
+Placing a Stonecutter near allows the smart crafting table to use it in recipes

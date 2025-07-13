@@ -66,6 +66,9 @@ dependencies {
 
     implementation "net.neoforged:neoforge:${neo_version}"
 
+    //JEI
+    compileOnly "curse.maven:jei-238222:5606861"
+    runtimeOnly "curse.maven:jei-238222:5606861"
 }
 
 tasks.withType(ProcessResources).configureEach {

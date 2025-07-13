@@ -6,6 +6,7 @@ import com.benbenlaw.smartcrafting.screen.SmartCraftingScreen;
 import net.minecraft.client.Minecraft;
 import net.minecraft.world.item.crafting.CraftingRecipe;
 import net.minecraft.world.item.crafting.RecipeHolder;
+import net.minecraft.world.item.crafting.SmithingRecipe;
 import net.minecraft.world.item.crafting.StonecutterRecipe;
 import net.minecraft.world.level.Level;
 import net.neoforged.neoforge.network.handling.IPayloadContext;
@@ -34,7 +35,7 @@ public record SmartCraftingRecipePacket() {
                 .map(Optional::get)
                 .filter(recipe -> {
                     // Keep only crafting or stonecutting recipes
-                    return recipe.value() instanceof CraftingRecipe || recipe.value() instanceof StonecutterRecipe;
+                    return recipe.value() instanceof CraftingRecipe || recipe.value() instanceof StonecutterRecipe|| recipe.value() instanceof SmithingRecipe;
                 })
                 .toList();
 

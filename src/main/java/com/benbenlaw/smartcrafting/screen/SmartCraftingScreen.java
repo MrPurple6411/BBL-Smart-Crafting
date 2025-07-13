@@ -15,6 +15,7 @@ import net.minecraft.resources.ResourceLocation;
 import net.minecraft.util.Mth;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
 import net.minecraft.world.item.crafting.*;
 import net.neoforged.neoforge.network.PacketDistributor;
 import org.lwjgl.glfw.GLFW;
@@ -304,15 +305,51 @@ public class SmartCraftingScreen extends AbstractContainerScreen<SmartCraftingMe
             offsetY = (gridSize - recipeHeight) / 2;
 
             tooltipTexture = CRAFTING_TOOLTIP_TEXTURE;
-        } else if (recipe instanceof StonecutterRecipe) {
+        } else if (recipe instanceof StonecutterRecipe stonecutterRecipe) {
             recipeWidth = 1;
             recipeHeight = 1;
-            offsetX = 1;
-            offsetY = 1;
-
-
 
             tooltipTexture = STONECUTTER_TOOLTIP_TEXTURE;
+
+            // Draw stonecutter input and output explicitly
+
+            guiGraphics.pose().pushPose();
+            guiGraphics.pose().translate(0, 0, 0);
+
+            RenderSystem.setShaderTexture(0, tooltipTexture);
+            guiGraphics.blit(
+                    tooltipTexture,
+                    tooltipX,
+                    tooltipY,
+                    0, 0,
+                    62, 62,
+                    62,
+                    62
+            );
+
+            // Input ingredient on left middle cell (0,1)
+            ItemStack inputStack = ItemStack.EMPTY;
+            if (!ingredients.isEmpty() && !ingredients.get(0).isEmpty()) {
+                ItemStack[] matchingStacks = ingredients.get(0).getItems();
+                if (matchingStacks.length > 0) {
+                    inputStack = matchingStacks[0];  // Just show first matching input for simplicity
+                }
+            }
+            int inputX = tooltipX + 0 * iconSize + 5;
+            int inputY = tooltipY + 1 * iconSize + 5;
+            guiGraphics.renderItem(inputStack, inputX, inputY);
+            if (!inputStack.isEmpty()) {
+                guiGraphics.renderItemDecorations(minecraft.font, inputStack, inputX, inputY);
+            }
+
+            // Output item on right middle cell (2,1)
+            int outputX = tooltipX + 2 * iconSize + 8;
+            int outputY = tooltipY + 1 * iconSize + 5;
+            guiGraphics.renderItem(new ItemStack(Items.STONECUTTER), outputX, outputY);
+            guiGraphics.pose().popPose();
+
+            // Return early because stonecutter is rendered here explicitly
+            return;
         } else {
             tooltipTexture = CRAFTING_TOOLTIP_TEXTURE;
         }
@@ -335,7 +372,7 @@ public class SmartCraftingScreen extends AbstractContainerScreen<SmartCraftingMe
                 62
         );
 
-        // Draw ingredients with proper mapping
+        // Draw ingredients with proper mapping for non-stonecutter recipes
         for (int slotY = 0; slotY < gridSize; slotY++) {
             for (int slotX = 0; slotX < gridSize; slotX++) {
                 int ingredientX = slotX - offsetX;
@@ -388,6 +425,7 @@ public class SmartCraftingScreen extends AbstractContainerScreen<SmartCraftingMe
 
         guiGraphics.pose().popPose();
     }
+
 
 
 
