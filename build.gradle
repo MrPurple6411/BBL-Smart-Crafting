@@ -1,4 +1,4 @@
-//import net.darkhax.curseforgegradle.TaskPublishCurseForge
+import net.darkhax.curseforgegradle.TaskPublishCurseForge
 
 plugins {
     id 'java-library'
@@ -124,19 +124,16 @@ idea {
     }
 }
 
-/*
-
 tasks.register('publishCurseForge', TaskPublishCurseForge) {
     group "modpublishing"
 
     apiToken = System.getenv("curseforge_token").toString()
 
-    def projectId = 1153960
+    def projectId = 1305347
     def mainFile = upload(projectId, jar)
 
     mainFile.changelog = changelog
     mainFile.addOptional("jei") // JEI
-    mainFile.addRequirement("bbl-core")
     mainFile.releaseType = "release"
     mainFile.gameVersions.addAll(minecraft_version)
 }
@@ -145,9 +142,9 @@ tasks.getByName("modrinth").setGroup("modpublishing")
 
 modrinth {
     token = System.getenv("modrinth_token").toString()
-    projectId = "4K7cmETW"
+    projectId = "QL7aPd0n"
     versionType = "release"
-    versionName = "bbl-cloche-" + "$minecraft_version" + "-" + "$mod_version"
+    versionName = "smartcrafting-" + "$minecraft_version" + "-" + "$mod_version"
     uploadFile = jar // With Loom, this MUST be set to `remapJar` instead of `jar`!
 
     gameVersions.addAll(minecraft_version)
@@ -156,11 +153,8 @@ modrinth {
     changelog = project.changelog
     dependencies {
         optional.project "jei"
-        required.project "bbl-core"
     }
 }
-
- */
 
 
 

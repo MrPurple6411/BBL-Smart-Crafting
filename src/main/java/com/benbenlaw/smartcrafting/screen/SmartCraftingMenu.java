@@ -258,7 +258,6 @@ public class SmartCraftingMenu extends AbstractContainerMenu {
                     }
                 }
             }
-
             player.playNotifySound(SoundEvents.LEVER_CLICK, SoundSource.PLAYERS, 1.0F, 1.0F);
             player.getInventory().setChanged();
             player.inventoryMenu.broadcastChanges();
@@ -282,7 +281,7 @@ public class SmartCraftingMenu extends AbstractContainerMenu {
                 if (!consumeIngredientsStonecutter(stonecutterRecipe, player.getInventory())) break;
             }
 
-            player.playNotifySound(SoundEvents.LEVER_CLICK, SoundSource.PLAYERS, 1.0F, 1.0F);
+            player.playNotifySound(SoundEvents.UI_STONECUTTER_TAKE_RESULT, SoundSource.PLAYERS, 1.0F, 1.0F);
             player.getInventory().setChanged();
             player.inventoryMenu.broadcastChanges();
             updateValidRecipes();

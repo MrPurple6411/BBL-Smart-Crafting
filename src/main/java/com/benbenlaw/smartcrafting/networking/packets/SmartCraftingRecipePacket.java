@@ -25,8 +25,7 @@ public record SmartCraftingRecipePacket() {
 
     // Resolve off-thread (not GUI)
     public void handle(final SmartCraftingRecipePayload payload, IPayloadContext context) {
-        Level level = Minecraft.getInstance().level;
-        if (level == null) return;
+        Level level = context.player().level();
 
         // Resolve off-thread (not GUI)
         List<? extends RecipeHolder<?>> resolvedRecipes = payload.recipeIds().stream()
