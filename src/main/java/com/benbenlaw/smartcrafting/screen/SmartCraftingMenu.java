@@ -229,25 +229,36 @@ public class SmartCraftingMenu extends AbstractContainerMenu {
                 List<Ingredient> ingredients = craftingRecipe.getIngredients();
                 int[] usedSlots = new int[player.getInventory().getContainerSize()];
 
+// Build a map to count how many times each unique ingredient appears
+                Map<Ingredient, Integer> ingredientCounts = new HashMap<>();
                 for (Ingredient ingredient : ingredients) {
-                    if (ingredient.isEmpty()) continue;
-
-                    boolean found = false;
-                    for (int slot = 0; slot < player.getInventory().getContainerSize(); slot++) {
-                        ItemStack stack = player.getInventory().getItem(slot);
-                        if (!stack.isEmpty() && ingredient.test(stack) && usedSlots[slot] < stack.getCount()) {
-                            stack.shrink(1);
-                            if (stack.isEmpty()) {
-                                player.getInventory().setItem(slot, ItemStack.EMPTY);
-                            }
-                            usedSlots[slot]++;
-                            found = true;
-                            break;
-                        }
+                    if (!ingredient.isEmpty()) {
+                        ingredientCounts.put(ingredient, ingredientCounts.getOrDefault(ingredient, 0) + 1);
                     }
+                }
 
-                    if (!found) {
-                        return; // Can't satisfy ingredient, stop crafting
+// Loop over each unique ingredient
+                for (Map.Entry<Ingredient, Integer> entry : ingredientCounts.entrySet()) {
+                    Ingredient ingredient = entry.getKey();
+                    int needed = entry.getValue();
+
+                    for (int n = 0; n < needed; n++) {
+                        boolean found = false;
+                        for (int slot = 0; slot < player.getInventory().getContainerSize(); slot++) {
+                            ItemStack stack = player.getInventory().getItem(slot);
+                            if (!stack.isEmpty() && ingredient.test(stack)) {
+                                stack.shrink(1);
+                                if (stack.isEmpty()) {
+                                    player.getInventory().setItem(slot, ItemStack.EMPTY);
+                                }
+                                found = true;
+                                break;
+                            }
+                        }
+
+                        if (!found) {
+                            return; // Couldn't find required item for this iteration
+                        }
                     }
                 }
 

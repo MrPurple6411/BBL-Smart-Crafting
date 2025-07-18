@@ -1,5 +1,8 @@
 Changelog Smart Crafting Table
 
+1.1.6
+Fixed Shift clicking recipe sometimes leaving a leftover item when it should be consumed
+
 1.1.5
 Fixed Crashes on server startup
 
