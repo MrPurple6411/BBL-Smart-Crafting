@@ -8,6 +8,8 @@ import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
+import net.minecraft.world.Container;
+import net.minecraft.world.SimpleContainer;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.inventory.*;
@@ -15,7 +17,12 @@ import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.crafting.*;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.entity.BaseContainerBlockEntity;
+import net.minecraft.world.level.block.entity.BlockEntity;
+import net.neoforged.neoforge.capabilities.Capabilities;
+import net.neoforged.neoforge.items.IItemHandler;
 import net.neoforged.neoforge.items.wrapper.PlayerInvWrapper;
 import net.neoforged.neoforge.network.PacketDistributor;
 import org.jetbrains.annotations.NotNull;
@@ -81,26 +88,110 @@ public class SmartCraftingMenu extends AbstractContainerMenu {
         List<RecipeHolder<CraftingRecipe>> craftingRecipes = rm.getAllRecipesFor(RecipeType.CRAFTING);
         List<RecipeHolder<StonecutterRecipe>> stonecutterRecipes = rm.getAllRecipesFor(RecipeType.STONECUTTING);
 
-        Inventory inv = player.getInventory();
+        Container inv = buildCombinedInventory();
         List<RecipeHolder<?>> allRecipes = new ArrayList<>();
 
-        // Crafting recipes always included
         craftingRecipes.stream()
                 .filter(holder -> recipeHasMatchingIngredients(holder.value(), inv))
                 .filter(holder -> canCraftFromInventory(holder.value(), inv))
                 .forEach(allRecipes::add);
 
-        // Check for nearby stonecutter
         if (isStonecutterNearby(player)) {
             stonecutterRecipes.stream()
                     .filter(holder -> recipeHasMatchingIngredients(holder.value(), inv))
                     .filter(holder -> canCraftStonecutterFromInventory(holder.value(), inv))
                     .forEach(allRecipes::add);
-
         }
 
         return allRecipes;
     }
+
+    private List<IItemHandler> findConnectedItemHandlers() {
+        List<IItemHandler> itemHandlers = new ArrayList<>();
+        final int radius = 3;
+
+        BlockPos.betweenClosedStream(
+                blockPos.offset(-radius, -2, -radius),
+                blockPos.offset(radius, 2, radius)
+        ).forEach(pos -> {
+            BlockEntity be = level.getBlockEntity(pos);
+            if (be != null) {
+                IItemHandler handler = Capabilities.ItemHandler.BLOCK
+                        .getCapability(level, pos, level.getBlockState(pos), be, null);
+                if (handler != null) {
+                    itemHandlers.add(handler);
+                }
+            }
+        });
+
+        return itemHandlers;
+    }
+
+    private Container buildCombinedInventory() {
+        List<ItemStack> combinedStacks = new ArrayList<>();
+
+        for (IItemHandler handler : findConnectedItemHandlers()) {
+            for (int i = 0; i < handler.getSlots(); i++) {
+                ItemStack stack = handler.getStackInSlot(i);
+                if (!stack.isEmpty()) {
+                    combinedStacks.add(stack.copy());
+                }
+            }
+        }
+
+        // Include player inventory
+        for (ItemStack stack : player.getInventory().items) {
+            if (!stack.isEmpty()) {
+                combinedStacks.add(stack.copy());
+            }
+        }
+
+        SimpleContainer combined = new SimpleContainer(combinedStacks.size());
+        for (int i = 0; i < combinedStacks.size(); i++) {
+            combined.setItem(i, combinedStacks.get(i));
+        }
+
+        return combined;
+    }
+
+
+    private boolean consumeIngredientFromAll(Ingredient ingredient, int count) {
+        int remaining = count;
+
+        // First, try consuming from nearby item handlers
+        for (IItemHandler handler : findConnectedItemHandlers()) {
+            for (int i = 0; i < handler.getSlots(); i++) {
+                ItemStack stack = handler.getStackInSlot(i);
+                if (!stack.isEmpty() && ingredient.test(stack)) {
+                    int toTake = Math.min(stack.getCount(), remaining);
+
+                    // Try simulate then execute
+                    ItemStack extracted = handler.extractItem(i, toTake, false);
+                    if (!extracted.isEmpty()) {
+                        remaining -= extracted.getCount();
+                        if (remaining <= 0) return true;
+                    }
+                }
+            }
+        }
+
+        // Then try consuming from the player's inventory
+        for (int i = 0; i < player.getInventory().getContainerSize(); i++) {
+            ItemStack stack = player.getInventory().getItem(i);
+            if (!stack.isEmpty() && ingredient.test(stack)) {
+                int toTake = Math.min(stack.getCount(), remaining);
+                stack.shrink(toTake);
+                if (stack.isEmpty()) {
+                    player.getInventory().setItem(i, ItemStack.EMPTY);
+                }
+                remaining -= toTake;
+                if (remaining <= 0) return true;
+            }
+        }
+
+        return remaining <= 0;
+    }
+
 
     private boolean isStonecutterNearby(Player player) {
         final int radius = 3;
@@ -119,15 +210,13 @@ public class SmartCraftingMenu extends AbstractContainerMenu {
         return false;
     }
 
-    private boolean canCraftFromInventory(CraftingRecipe recipe, Inventory inv) {
+    private boolean canCraftFromInventory(CraftingRecipe recipe, Container inv) {
         CraftingInput input = buildCraftingInputForRecipe(recipe, inv);
         return recipe.matches(input, level);
     }
 
-    private boolean canCraftStonecutterFromInventory(StonecutterRecipe recipe, Inventory inv) {
-        List<Ingredient> ingredients = recipe.getIngredients();
-
-        for (Ingredient ingredient : ingredients) {
+    private boolean canCraftStonecutterFromInventory(StonecutterRecipe recipe, Container inv) {
+        for (Ingredient ingredient : recipe.getIngredients()) {
             boolean found = false;
             for (int i = 0; i < inv.getContainerSize(); i++) {
                 ItemStack stack = inv.getItem(i);
@@ -136,15 +225,12 @@ public class SmartCraftingMenu extends AbstractContainerMenu {
                     break;
                 }
             }
-            if (!found) {
-                System.out.println("Missing ingredient for stonecutter recipe: " + recipe);
-                return false;
-            }
+            if (!found) return false;
         }
         return true;
     }
 
-    private CraftingInput buildCraftingInputForRecipe(CraftingRecipe recipe, Inventory inv) {
+    private CraftingInput buildCraftingInputForRecipe(CraftingRecipe recipe, Container inv) {
         NonNullList<ItemStack> grid = NonNullList.withSize(9, ItemStack.EMPTY);
         List<Ingredient> ingredients = recipe.getIngredients();
         int[] usedSlots = new int[inv.getContainerSize()];
@@ -177,7 +263,6 @@ public class SmartCraftingMenu extends AbstractContainerMenu {
                 }
             }
         } else {
-            // Fallback for shapeless recipes: fill first N slots
             int placed = 0;
             for (Ingredient ing : ingredients) {
                 if (ing.isEmpty()) continue;
@@ -202,6 +287,7 @@ public class SmartCraftingMenu extends AbstractContainerMenu {
     }
 
 
+
     public void craftRecipeById(ResourceLocation recipeId, boolean shiftClick) {
         if (level.isClientSide) return;
 
@@ -211,12 +297,12 @@ public class SmartCraftingMenu extends AbstractContainerMenu {
 
         Recipe<?> recipeHolder = optionalRecipe.get().value();
 
-        // Handle CraftingRecipe
         if (recipeHolder instanceof CraftingRecipe craftingRecipe) {
             int maxCrafts = shiftClick ? getMaxCraftableAmount(craftingRecipe) : 1;
 
             for (int i = 0; i < maxCrafts; i++) {
-                CraftingInput input = buildCraftingInputForRecipe(craftingRecipe, player.getInventory());
+                Container combinedInv = buildCombinedInventory();
+                CraftingInput input = buildCraftingInputForRecipe(craftingRecipe, combinedInv);
 
                 if (!craftingRecipe.matches(input, level)) break;
 
@@ -227,9 +313,7 @@ public class SmartCraftingMenu extends AbstractContainerMenu {
                 }
 
                 List<Ingredient> ingredients = craftingRecipe.getIngredients();
-                int[] usedSlots = new int[player.getInventory().getContainerSize()];
 
-// Build a map to count how many times each unique ingredient appears
                 Map<Ingredient, Integer> ingredientCounts = new HashMap<>();
                 for (Ingredient ingredient : ingredients) {
                     if (!ingredient.isEmpty()) {
@@ -237,28 +321,13 @@ public class SmartCraftingMenu extends AbstractContainerMenu {
                     }
                 }
 
-// Loop over each unique ingredient
                 for (Map.Entry<Ingredient, Integer> entry : ingredientCounts.entrySet()) {
                     Ingredient ingredient = entry.getKey();
                     int needed = entry.getValue();
 
-                    for (int n = 0; n < needed; n++) {
-                        boolean found = false;
-                        for (int slot = 0; slot < player.getInventory().getContainerSize(); slot++) {
-                            ItemStack stack = player.getInventory().getItem(slot);
-                            if (!stack.isEmpty() && ingredient.test(stack)) {
-                                stack.shrink(1);
-                                if (stack.isEmpty()) {
-                                    player.getInventory().setItem(slot, ItemStack.EMPTY);
-                                }
-                                found = true;
-                                break;
-                            }
-                        }
-
-                        if (!found) {
-                            return; // Couldn't find required item for this iteration
-                        }
+                    if (!consumeIngredientFromAll(ingredient, needed)) {
+                        // Could not consume enough ingredients from all sources, stop crafting
+                        return;
                     }
                 }
 
@@ -273,15 +342,17 @@ public class SmartCraftingMenu extends AbstractContainerMenu {
             player.getInventory().setChanged();
             player.inventoryMenu.broadcastChanges();
             updateValidRecipes();
-            return; // Done crafting craftingRecipe
+            return;
         }
 
-        // Handle StonecutterRecipe
+        // Stonecutter handling unchanged ...
         if (recipeHolder instanceof StonecutterRecipe stonecutterRecipe) {
             int maxCrafts = shiftClick ? getMaxCraftableAmountStonecutter(stonecutterRecipe) : 1;
 
             for (int i = 0; i < maxCrafts; i++) {
-                if (!canCraftStonecutterFromInventory(stonecutterRecipe, player.getInventory())) break;
+                Container combinedInv = buildCombinedInventory();
+
+                if (!canCraftStonecutterFromInventory(stonecutterRecipe, combinedInv)) break;
 
                 ItemStack result = stonecutterRecipe.assemble(null, level.registryAccess()); // input param can be null
 
@@ -289,7 +360,7 @@ public class SmartCraftingMenu extends AbstractContainerMenu {
                     player.drop(result.copy(), false);
                 }
 
-                if (!consumeIngredientsStonecutter(stonecutterRecipe, player.getInventory())) break;
+                if (!consumeIngredientsStonecutter(stonecutterRecipe, combinedInv)) break;
             }
 
             player.playNotifySound(SoundEvents.UI_STONECUTTER_TAKE_RESULT, SoundSource.PLAYERS, 1.0F, 1.0F);
@@ -338,13 +409,14 @@ public class SmartCraftingMenu extends AbstractContainerMenu {
     }
 
 
-    private boolean recipeHasMatchingIngredients(Recipe<?> recipe, Inventory inv) {
+    private boolean recipeHasMatchingIngredients(Recipe<?> recipe, Container inv) {
 
         if (recipe instanceof CraftingRecipe craftingRecipe) {
             for (Ingredient ingredient : craftingRecipe.getIngredients()) {
                 if (ingredient.isEmpty()) continue;
                 boolean found = false;
-                for (ItemStack stack : inv.items) {
+                for (int i = 0; i < inv.getContainerSize(); i++) {
+                    ItemStack stack = inv.getItem(i);
                     if (!stack.isEmpty() && ingredient.test(stack)) {
                         found = true;
                         break;
@@ -359,7 +431,8 @@ public class SmartCraftingMenu extends AbstractContainerMenu {
             for (Ingredient ingredient : stonecutterRecipe.getIngredients()) {
                 if (ingredient.isEmpty()) continue;
                 boolean found = false;
-                for (ItemStack stack : inv.items) {
+                for (int i = 0; i < inv.getContainerSize(); i++) {
+                    ItemStack stack = inv.getItem(i);
                     if (!stack.isEmpty() && ingredient.test(stack)) {
                         found = true;
                         break;
@@ -367,22 +440,23 @@ public class SmartCraftingMenu extends AbstractContainerMenu {
                 }
                 if (!found) return false;
             }
-
             return true;
         }
 
         return false;
     }
 
+
     private int getMaxCraftableAmount(CraftingRecipe recipe) {
-        Inventory inv = player.getInventory();
+        Container inv = buildCombinedInventory();
         int max = Integer.MAX_VALUE;
 
         for (Ingredient ingredient : recipe.getIngredients()) {
             if (ingredient.isEmpty()) continue;
 
             int count = 0;
-            for (ItemStack stack : inv.items) {
+            for (int i = 0; i < inv.getContainerSize(); i++) {
+                ItemStack stack = inv.getItem(i);
                 if (ingredient.test(stack)) {
                     count += stack.getCount();
                 }
@@ -394,14 +468,15 @@ public class SmartCraftingMenu extends AbstractContainerMenu {
         return Math.max(0, Math.min(max, 64));
     }
 
-    private boolean consumeIngredientsStonecutter(StonecutterRecipe recipe, Inventory inventory) {
-        Ingredient ingredient = recipe.getIngredients().get(0); // Usually just one ingredient for stonecutter
-        for (int i = 0; i < inventory.getContainerSize(); i++) {
-            ItemStack stack = inventory.getItem(i);
+    private boolean consumeIngredientsStonecutter(StonecutterRecipe recipe, Container container) {
+        Ingredient ingredient = recipe.getIngredients().get(0); // Usually one ingredient
+
+        for (int i = 0; i < container.getContainerSize(); i++) {
+            ItemStack stack = container.getItem(i);
             if (!stack.isEmpty() && ingredient.test(stack)) {
                 stack.shrink(1);
                 if (stack.isEmpty()) {
-                    inventory.setItem(i, ItemStack.EMPTY);
+                    container.setItem(i, ItemStack.EMPTY);
                 }
                 return true;
             }
@@ -410,18 +485,20 @@ public class SmartCraftingMenu extends AbstractContainerMenu {
     }
 
     private int getMaxCraftableAmountStonecutter(StonecutterRecipe recipe) {
-        Inventory inv = player.getInventory();
-        List<Ingredient> ingredients = recipe.getIngredients();
-
+        Container inv = buildCombinedInventory();
         int max = Integer.MAX_VALUE;
 
-        for (Ingredient ingredient : ingredients) {
+        for (Ingredient ingredient : recipe.getIngredients()) {
+            if (ingredient.isEmpty()) continue;
+
             int count = 0;
-            for (ItemStack stack : inv.items) {
+            for (int i = 0; i < inv.getContainerSize(); i++) {
+                ItemStack stack = inv.getItem(i);
                 if (ingredient.test(stack)) {
                     count += stack.getCount();
                 }
             }
+
             max = Math.min(max, count);
         }
 

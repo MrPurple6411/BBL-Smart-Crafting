@@ -138,11 +138,14 @@ public class SmartCraftingScreen extends AbstractContainerScreen<SmartCraftingMe
 
 
 
+
     @Override
     protected void renderBg(GuiGraphics guiGraphics, float partialTicks, int mouseX, int mouseY) {
         RenderSystem.setShader(GameRenderer::getPositionTexShader);
         RenderSystem.setShaderColor(1.0F, 1.0F, 1.0F, 1.0F);
         RenderSystem.setShaderTexture(0, TEXTURE);
+
+
 
         int x = (width - imageWidth) / 2;
         int y = (height - imageHeight) / 2;

@@ -1,5 +1,9 @@
 Changelog Smart Crafting Table
 
+1.1.7
+Disabled debug message when clicking
+Now connects to inventories around it
+
 1.1.6
 Fixed Shift clicking recipe sometimes leaving a leftover item when it should be consumed
 

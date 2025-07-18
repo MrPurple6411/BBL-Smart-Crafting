@@ -16,8 +16,6 @@ public record SmartCraftingRecipeClickPacket() {
     public void handle(final SmartCraftingRecipeClickPayload payload, IPayloadContext context) {
         ServerPlayer player = (ServerPlayer) context.player();
 
-        System.out.println(payload.isShifting());
-
         if (player.containerMenu instanceof SmartCraftingMenu menu) {
             menu.craftRecipeById(payload.recipeID(), payload.isShifting());
         }
