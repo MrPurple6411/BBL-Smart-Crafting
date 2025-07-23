@@ -140,6 +140,7 @@ public class SmartCraftingScreen extends AbstractContainerScreen<SmartCraftingMe
                     .toList();
 
             // If selected recipe exists, move its mod recipes to the top
+
             if (selectedRecipeId != null) {
                 String selectedModId = selectedRecipeId.getNamespace();
 
