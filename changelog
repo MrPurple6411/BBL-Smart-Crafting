@@ -1,5 +1,11 @@
 Changelog Smart Crafting Table
 
+1.1.8
+When a recipe is selected that recipe moves to the top right of the list and retains its position whilst it is the selected recipe
+Recipe now ordered by name, this can be changed to mod in the Smart Crafting Table gui
+Recipe list now changes to show recipe from the selected mod first eg if you select a recipe from ae2, valid ae2 recipes will be shown first,
+then normal search for either mod or name carries on
+
 1.1.7
 Disabled debug message when clicking
 Now connects to inventories around it

@@ -4,6 +4,7 @@ import com.benbenlaw.smartcrafting.networking.payload.SmartCraftingRecipePayload
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.NonNullList;
 import net.minecraft.network.FriendlyByteBuf;
+import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.sounds.SoundEvents;
@@ -36,10 +37,10 @@ public class SmartCraftingMenu extends AbstractContainerMenu {
     protected Player player;
     protected BlockPos blockPos;
     private final NonNullList<ItemStack> lastInventorySnapshot;
+    public String sortType;
 
     public SmartCraftingMenu(int containerID, Inventory inventory, FriendlyByteBuf extraData) {
         this(containerID, inventory, extraData.readBlockPos(), new SimpleContainerData(2));
-
     }
 
     public SmartCraftingMenu(int containerID, Inventory inventory, BlockPos blockPos, ContainerData data) {
@@ -48,6 +49,7 @@ public class SmartCraftingMenu extends AbstractContainerMenu {
         this.blockPos = blockPos;
         this.level = inventory.player.level();
         this.data = data;
+        this.sortType = player.getPersistentData().getString("smart_crafting_sort_type");
 
         this.lastInventorySnapshot = NonNullList.withSize(player.getInventory().items.size(), ItemStack.EMPTY);
         for (int i = 0; i < player.getInventory().items.size(); i++) {
@@ -61,7 +63,6 @@ public class SmartCraftingMenu extends AbstractContainerMenu {
         checkContainerSize(inventory, 2);
         addPlayerInventory(inventory);
         addPlayerHotbar(inventory);
-
         addDataSlots(data);
     }
 
@@ -84,6 +85,8 @@ public class SmartCraftingMenu extends AbstractContainerMenu {
     public List<RecipeHolder<?>> getValidRecipes() {
         if (level.isClientSide) return Collections.emptyList();
 
+        long startTime = System.nanoTime(); // Start timing
+
         RecipeManager rm = level.getRecipeManager();
         List<RecipeHolder<CraftingRecipe>> craftingRecipes = rm.getAllRecipesFor(RecipeType.CRAFTING);
         List<RecipeHolder<StonecutterRecipe>> stonecutterRecipes = rm.getAllRecipesFor(RecipeType.STONECUTTING);
@@ -91,20 +94,34 @@ public class SmartCraftingMenu extends AbstractContainerMenu {
         Container inv = buildCombinedInventory();
         List<RecipeHolder<?>> allRecipes = new ArrayList<>();
 
-        craftingRecipes.stream()
-                .filter(holder -> recipeHasMatchingIngredients(holder.value(), inv))
-                .filter(holder -> canCraftFromInventory(holder.value(), inv))
-                .forEach(allRecipes::add);
-
-        if (isStonecutterNearby(player)) {
-            stonecutterRecipes.stream()
-                    .filter(holder -> recipeHasMatchingIngredients(holder.value(), inv))
-                    .filter(holder -> canCraftStonecutterFromInventory(holder.value(), inv))
-                    .forEach(allRecipes::add);
+        int craftingMatchCount = 0;
+        for (RecipeHolder<CraftingRecipe> holder : craftingRecipes) {
+            if (recipeHasMatchingIngredients(holder.value(), inv) && canCraftFromInventory(holder.value(), inv)) {
+                allRecipes.add(holder);
+                craftingMatchCount++;
+            }
         }
+
+        int stonecutterMatchCount = 0;
+        if (isStonecutterNearby(player)) {
+            for (RecipeHolder<StonecutterRecipe> holder : stonecutterRecipes) {
+                if (recipeHasMatchingIngredients(holder.value(), inv) && canCraftStonecutterFromInventory(holder.value(), inv)) {
+                    allRecipes.add(holder);
+                    stonecutterMatchCount++;
+                }
+            }
+        }
+
+        long endTime = System.nanoTime(); // End timing
+        double durationMs = (endTime - startTime) / 1_000_000.0;
+//
+        //player.sendSystemMessage(Component.literal("  Crafting Recipes: " + craftingMatchCount + " / " + craftingRecipes.size()));
+        //player.sendSystemMessage(Component.literal("  Stonecutter Recipes: " + stonecutterMatchCount + " / " + stonecutterRecipes.size()));
+        //player.sendSystemMessage(Component.literal(String.format("  Recipe filtering took %.3f ms", durationMs)));
 
         return allRecipes;
     }
+
 
     private List<IItemHandler> findConnectedItemHandlers() {
         List<IItemHandler> itemHandlers = new ArrayList<>();
@@ -527,8 +544,6 @@ public class SmartCraftingMenu extends AbstractContainerMenu {
         }
 
         if (changed) {
-            updateValidRecipes();
-
             // Update the snapshot
             for (int i = 0; i < current.size(); i++) {
                 lastInventorySnapshot.set(i, current.get(i).copy());

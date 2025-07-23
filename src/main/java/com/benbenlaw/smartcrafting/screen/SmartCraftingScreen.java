@@ -1,6 +1,7 @@
 package com.benbenlaw.smartcrafting.screen;
 
 import com.benbenlaw.smartcrafting.SmartCrafting;
+import com.benbenlaw.smartcrafting.networking.packets.SyncSortType;
 import com.benbenlaw.smartcrafting.networking.payload.SmartCraftingRecipeClickPayload;
 import com.benbenlaw.smartcrafting.util.MouseUtil;
 import com.mojang.blaze3d.systems.RenderSystem;
@@ -18,6 +19,7 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.item.crafting.*;
 import net.neoforged.neoforge.network.PacketDistributor;
+import org.jetbrains.annotations.NotNull;
 import org.lwjgl.glfw.GLFW;
 
 import java.util.*;
@@ -37,13 +39,28 @@ public class SmartCraftingScreen extends AbstractContainerScreen<SmartCraftingMe
     static final ResourceLocation SCROLL_SPRITE =
             ResourceLocation.fromNamespaceAndPath(SmartCrafting.MOD_ID,"textures/gui/scroll.png");
 
+    static final ResourceLocation MODE_BUTTON_SPRITE =
+            ResourceLocation.fromNamespaceAndPath(SmartCrafting.MOD_ID,"textures/gui/mode_button.png");
+
     private List<?> recipes = Collections.emptyList();
 
     private List<RecipeHolder<?>> clientRecipes = Collections.emptyList();
 
     public void setClientRecipes(List<RecipeHolder<?>> recipes) {
-        this.clientRecipes = recipes;
+        this.clientRecipes = new ArrayList<>(recipes);
+
+        // Sort by mod ID lexicographically
+        this.clientRecipes.sort(Comparator.comparing(r -> r.id().getNamespace()));
+
         updateFilteredRecipes();
+        moveSelectedRecipeToFront();
+
+        scrollOffset = 0;
+    }
+
+    private int getMaxScroll() {
+        int totalRows = (int) Math.ceil((double) filteredRecipes.size() / VISIBLE_COLS);
+        return Math.max(0, totalRows - VISIBLE_ROWS);
     }
 
     // Slot size and layout
@@ -60,6 +77,7 @@ public class SmartCraftingScreen extends AbstractContainerScreen<SmartCraftingMe
     private int hoveredRecipeIndex = -1;
     private int scrollOffset = 0;
     private boolean isDraggingScrollbar = false;
+    private ResourceLocation selectedRecipeId = null;
 
     private static final int COLUMNS = 8;
     public static int visibleRows = 3;
@@ -69,6 +87,8 @@ public class SmartCraftingScreen extends AbstractContainerScreen<SmartCraftingMe
     private String lastSearchText = "";
     private List<RecipeHolder<?>> filteredRecipes = Collections.emptyList();
     private int dragOffsetY = 0;
+
+    private SortType currentSortType = SortType.NAME;
 
     public SmartCraftingScreen(SmartCraftingMenu menu, Inventory inventory, Component title) {
         super(menu, inventory, title);
@@ -102,7 +122,7 @@ public class SmartCraftingScreen extends AbstractContainerScreen<SmartCraftingMe
 
     private void updateFilteredRecipes() {
         if (lastSearchText.isEmpty()) {
-            filteredRecipes = clientRecipes;
+            filteredRecipes = new ArrayList<>(clientRecipes);
         } else {
             filteredRecipes = clientRecipes.stream()
                     .filter(holder -> {
@@ -112,6 +132,65 @@ public class SmartCraftingScreen extends AbstractContainerScreen<SmartCraftingMe
                     })
                     .toList();
         }
+
+        if (currentSortType == SortType.MOD) {
+            // Sort alphabetically by mod id first
+            filteredRecipes = filteredRecipes.stream()
+                    .sorted(Comparator.comparing(r -> r.id().getNamespace()))
+                    .toList();
+
+            // If selected recipe exists, move its mod recipes to the top
+            if (selectedRecipeId != null) {
+                String selectedModId = selectedRecipeId.getNamespace();
+
+                List<RecipeHolder<?>> selectedModRecipes = new ArrayList<>();
+                List<RecipeHolder<?>> otherModRecipes = new ArrayList<>();
+
+                for (RecipeHolder<?> recipe : filteredRecipes) {
+                    String recipeModId = recipe.id().getNamespace();
+                    if (recipeModId.equalsIgnoreCase(selectedModId)) {
+                        selectedModRecipes.add(recipe);
+                    } else {
+                        otherModRecipes.add(recipe);
+                    }
+                }
+
+                List<RecipeHolder<?>> combined = new ArrayList<>();
+                combined.addAll(selectedModRecipes);
+                combined.addAll(otherModRecipes);
+
+                filteredRecipes = List.copyOf(combined);
+            }
+        } else if (currentSortType == SortType.NAME) {
+            // Sort alphabetically by recipe name
+            filteredRecipes = filteredRecipes.stream()
+                    .sorted(Comparator.comparing(recipe -> {
+                        ItemStack result = recipe.value().getResultItem(Minecraft.getInstance().level.registryAccess());
+                        return result.getHoverName().getString().toLowerCase(Locale.ROOT);
+                    }))
+                    .toList();
+        }
+    }
+
+
+
+    private @NotNull List<RecipeHolder<?>> getRecipeHolders(String selectedModId) {
+        List<RecipeHolder<?>> selectedModRecipes = new ArrayList<>();
+        List<RecipeHolder<?>> otherModRecipes = new ArrayList<>();
+
+        for (RecipeHolder<?> recipe : filteredRecipes) {
+            String recipeModId = recipe.id().getNamespace();
+            if (recipeModId.equalsIgnoreCase(selectedModId)) {
+                selectedModRecipes.add(recipe);
+            } else {
+                otherModRecipes.add(recipe);
+            }
+        }
+
+        List<RecipeHolder<?>> combined = new ArrayList<>();
+        combined.addAll(selectedModRecipes);
+        combined.addAll(otherModRecipes);
+        return combined;
     }
 
 
@@ -162,16 +241,13 @@ public class SmartCraftingScreen extends AbstractContainerScreen<SmartCraftingMe
             filteredRecipes = clientRecipes;
         }
 
-        int x = (width - imageWidth) / 2;
-        int y = (height - imageHeight) / 2;
-
         renderBackground(guiGraphics, mouseX, mouseY, partialTicks);
         super.render(guiGraphics, mouseX, mouseY, partialTicks);
         renderRecipeIngredients(guiGraphics, mouseX, mouseY);
         renderRecipeIcons(guiGraphics, mouseX, mouseY);
         renderTooltip(guiGraphics, mouseX, mouseY);
-
-        //guiGraphics.blit(SCROLL_SPRITE, x + SCROLLBAR_X_OFFSET, y + SCROLLBAR_Y_OFFSET, 168, 0, 12, 15, 12, 15);
+        renderButtonTooltip(guiGraphics, mouseX, mouseY);
+        guiGraphics.blit(MODE_BUTTON_SPRITE, leftPos + 153, topPos - 14, 0, 0, 14, 14, 14, 14);
 
     }
 
@@ -203,6 +279,15 @@ public class SmartCraftingScreen extends AbstractContainerScreen<SmartCraftingMe
 
             int iconX = xStart + col * ICON_SPACING;
             int iconY = yStart + (row - scrollOffset) * ICON_SPACING;
+
+            if (recipe.id().equals(selectedRecipeId)) {
+                // Yellow border with some transparency
+                guiGraphics.fill(
+                        iconX - 1, iconY - 1,
+                        iconX + ICON_SIZE + 1, iconY + ICON_SIZE + 1,
+                        0xAAFFFF00
+                );
+            }
 
             guiGraphics.renderItem(resultStack, iconX, iconY);
             guiGraphics.renderItemDecorations(minecraft.font, resultStack, iconX, iconY);
@@ -272,14 +357,46 @@ public class SmartCraftingScreen extends AbstractContainerScreen<SmartCraftingMe
         return super.mouseDragged(mouseX, mouseY, button, dragX, dragY);
     }
 
+    private void moveSelectedRecipeToFront() {
+        if (selectedRecipeId == null) return;
+
+        int index = -1;
+        for (int i = 0; i < filteredRecipes.size(); i++) {
+            if (filteredRecipes.get(i).id().equals(selectedRecipeId)) {
+                index = i;
+                break;
+            }
+        }
+        if (index > 0) {
+            // Move the selected recipe to the front
+            List<RecipeHolder<?>> newList = new ArrayList<>(filteredRecipes);
+            RecipeHolder<?> selectedRecipe = newList.remove(index);
+            newList.add(0, selectedRecipe);
+            filteredRecipes = List.copyOf(newList);
+        }
+    }
 
     private void renderRecipeIngredients(GuiGraphics guiGraphics, int mouseX, int mouseY) {
-        if (hoveredRecipeIndex == -1) return;
+        int indexToRender = hoveredRecipeIndex;
 
-        if (filteredRecipes.isEmpty() || hoveredRecipeIndex < 0 || hoveredRecipeIndex >= filteredRecipes.size()) {
+        // If no recipe is hovered, try to render the selected recipe
+        if (indexToRender == -1 && selectedRecipeId != null) {
+            // Find the selected recipe index
+            for (int i = 0; i < filteredRecipes.size(); i++) {
+                if (filteredRecipes.get(i).id().equals(selectedRecipeId)) {
+                    indexToRender = i;
+                    break;
+                }
+            }
+        }
+
+        if (indexToRender == -1) return; // Nothing to render
+
+        if (filteredRecipes.isEmpty() || indexToRender < 0 || indexToRender >= filteredRecipes.size()) {
             return;
         }
-        RecipeHolder<?> recipeHolder = filteredRecipes.get(hoveredRecipeIndex);
+
+        RecipeHolder<?> recipeHolder = filteredRecipes.get(indexToRender);
         Recipe<?> recipe = recipeHolder.value();
 
         List<Ingredient> ingredients = recipe.getIngredients();
@@ -287,18 +404,15 @@ public class SmartCraftingScreen extends AbstractContainerScreen<SmartCraftingMe
         int gridSize = 3;
         int iconSize = 18;  // spacing between icons
 
-        // Fixed tooltip position left of GUI
         int tooltipX = this.leftPos - 58;
         int tooltipY = this.topPos;
 
         int recipeWidth = 3;
         int recipeHeight = 3;
 
-        // Calculate offset to center recipe in 3x3 grid
         int offsetX = 0;
         int offsetY = 0;
 
-        // Texture to use for tooltip
         ResourceLocation tooltipTexture;
 
         if (recipe instanceof net.minecraft.world.item.crafting.ShapedRecipe shaped) {
@@ -308,14 +422,11 @@ public class SmartCraftingScreen extends AbstractContainerScreen<SmartCraftingMe
             offsetY = (gridSize - recipeHeight) / 2;
 
             tooltipTexture = CRAFTING_TOOLTIP_TEXTURE;
-        } else if (recipe instanceof StonecutterRecipe stonecutterRecipe) {
-            recipeWidth = 1;
-            recipeHeight = 1;
+        } else if (recipe instanceof StonecutterRecipe) {
 
             tooltipTexture = STONECUTTER_TOOLTIP_TEXTURE;
 
             // Draw stonecutter input and output explicitly
-
             guiGraphics.pose().pushPose();
             guiGraphics.pose().translate(0, 0, 0);
 
@@ -330,28 +441,25 @@ public class SmartCraftingScreen extends AbstractContainerScreen<SmartCraftingMe
                     62
             );
 
-            // Input ingredient on left middle cell (0,1)
             ItemStack inputStack = ItemStack.EMPTY;
-            if (!ingredients.isEmpty() && !ingredients.get(0).isEmpty()) {
-                ItemStack[] matchingStacks = ingredients.get(0).getItems();
+            if (!ingredients.isEmpty() && !ingredients.getFirst().isEmpty()) {
+                ItemStack[] matchingStacks = ingredients.getFirst().getItems();
                 if (matchingStacks.length > 0) {
                     inputStack = matchingStacks[0];  // Just show first matching input for simplicity
                 }
             }
-            int inputX = tooltipX + 0 * iconSize + 5;
-            int inputY = tooltipY + 1 * iconSize + 5;
+            int inputX = tooltipX + 5;
+            int inputY = tooltipY + iconSize + 5;
             guiGraphics.renderItem(inputStack, inputX, inputY);
             if (!inputStack.isEmpty()) {
                 guiGraphics.renderItemDecorations(minecraft.font, inputStack, inputX, inputY);
             }
 
-            // Output item on right middle cell (2,1)
             int outputX = tooltipX + 2 * iconSize + 8;
-            int outputY = tooltipY + 1 * iconSize + 5;
+            int outputY = tooltipY + iconSize + 5;
             guiGraphics.renderItem(new ItemStack(Items.STONECUTTER), outputX, outputY);
             guiGraphics.pose().popPose();
 
-            // Return early because stonecutter is rendered here explicitly
             return;
         } else {
             tooltipTexture = CRAFTING_TOOLTIP_TEXTURE;
@@ -359,10 +467,6 @@ public class SmartCraftingScreen extends AbstractContainerScreen<SmartCraftingMe
 
         guiGraphics.pose().pushPose();
         guiGraphics.pose().translate(0, 0, 0);
-
-        // Size of the texture on the screen (adjust if needed)
-        int texWidth = 64;
-        int texHeight = 64;
 
         RenderSystem.setShaderTexture(0, tooltipTexture);
         guiGraphics.blit(
@@ -429,10 +533,6 @@ public class SmartCraftingScreen extends AbstractContainerScreen<SmartCraftingMe
         guiGraphics.pose().popPose();
     }
 
-
-
-
-
     @Override
     protected void renderLabels(GuiGraphics guiGraphics, int mouseX, int mouseY) {
         guiGraphics.drawString(font, title, 8, 6, 0x404040, false);
@@ -441,6 +541,32 @@ public class SmartCraftingScreen extends AbstractContainerScreen<SmartCraftingMe
 
     @Override
     public boolean mouseClicked(double mouseX, double mouseY, int button) {
+        boolean clickedOnSearchBox = searchBox.isMouseOver(mouseX, mouseY);
+
+        //Button Press
+        if (MouseUtil.isMouseOver(mouseX, mouseY, leftPos + 153, topPos - 14, 14, 14)) {
+            if (currentSortType == SortType.NAME) {
+                currentSortType = SortType.MOD;
+                PacketDistributor.sendToServer(new SyncSortType("mod"));
+                this.menu.player.getPersistentData().putString("smart_crafting_sort_type", "mod");
+            } else {
+                currentSortType = SortType.NAME;
+                PacketDistributor.sendToServer(new SyncSortType("name"));
+                this.menu.player.getPersistentData().putString("smart_crafting_sort_type", "name");
+            }
+
+            updateFilteredRecipes();
+            moveSelectedRecipeToFront();
+            scrollOffset = 0;  // Reset scroll to top
+            return true;
+        }
+
+        if (!clickedOnSearchBox) {
+            // Clicked outside the search box, unfocus it
+            searchBox.setFocused(false);
+        }
+
+        // Existing mouseClicked logic below
         if (button == 0) {
             int xStart = (width - imageWidth) / 2 + 11;
             int yStart = (height - imageHeight) / 2 + 17;
@@ -449,7 +575,6 @@ public class SmartCraftingScreen extends AbstractContainerScreen<SmartCraftingMe
                 int row = i / VISIBLE_COLS;
                 int col = i % VISIBLE_COLS;
 
-                // Only consider visible rows with scrollOffset
                 if (row < scrollOffset || row >= scrollOffset + VISIBLE_ROWS) {
                     continue;
                 }
@@ -461,22 +586,28 @@ public class SmartCraftingScreen extends AbstractContainerScreen<SmartCraftingMe
                         mouseY >= iconY && mouseY <= iconY + ICON_SIZE) {
 
                     var recipeId = filteredRecipes.get(i).id();
+                    selectedRecipeId = recipeId;
+
+                    moveSelectedRecipeToFront();
+                    scrollOffset = 0;  // Scroll to top
+
                     assert Minecraft.getInstance().player != null;
                     boolean isShiftClick = hasShiftDown();
                     PacketDistributor.sendToServer(new SmartCraftingRecipeClickPayload(recipeId, isShiftClick));
-                    return true; // Click handled
+                    return true;
                 }
             }
         }
 
-        if (button == 1) { // Right-click
-            if (searchBox.isMouseOver(mouseX, mouseY)) {
+        if (button == 1) {
+            if (clickedOnSearchBox) {
                 searchBox.setValue("");
-                onSearchTextChanged(""); // Also trigger filtering
+                onSearchTextChanged("");
                 return true;
             }
         }
 
+        // Scrollbar logic
         int scrollbarX = leftPos + SCROLLBAR_X_OFFSET;
         int scrollbarY = topPos + SCROLLBAR_Y_OFFSET;
         int handleHeight = 15;
@@ -498,6 +629,7 @@ public class SmartCraftingScreen extends AbstractContainerScreen<SmartCraftingMe
         return super.mouseClicked(mouseX, mouseY, button);
     }
 
+
     @Override
     public boolean mouseReleased(double mouseX, double mouseY, int button) {
         if (button == 0 && isDraggingScrollbar) {
@@ -513,8 +645,6 @@ public class SmartCraftingScreen extends AbstractContainerScreen<SmartCraftingMe
         int maxRows = (int) Math.ceil(filteredRecipes.size() / (float) VISIBLE_COLS);
         int maxScroll = Math.max(0, maxRows - VISIBLE_ROWS);
 
-        // Scrolling up: deltaY > 0 -> decrease scrollOffset (go up one row)
-        // Scrolling down: deltaY < 0 -> increase scrollOffset (go down one row)
         if (deltaY < 0 && scrollOffset < maxScroll) {
             scrollOffset++;
         } else if (deltaY > 0 && scrollOffset > 0) {
@@ -522,5 +652,23 @@ public class SmartCraftingScreen extends AbstractContainerScreen<SmartCraftingMe
         }
 
         return true;
+    }
+
+    public void renderButtonTooltip(GuiGraphics guiGraphics, int mouseX, int mouseY) {
+        if (MouseUtil.isMouseOver(mouseX, mouseY, leftPos + 153, topPos - 14, 14, 14)) {
+
+            String typeString = this.menu.player.getPersistentData().getString("smart_crafting_sort_type");
+
+            if (typeString.equals("name")) {
+                guiGraphics.renderTooltip(font,
+                        Component.translatable("block.smartcrafting.smart_crafting_table.sort_by_name")
+                                .withStyle(ChatFormatting.WHITE), mouseX, mouseY);
+            } else {
+                guiGraphics.renderTooltip(font,
+                        Component.translatable("block.smartcrafting.smart_crafting_table.sort_by_mod")
+                                .withStyle(ChatFormatting.WHITE), mouseX, mouseY);
+
+            }
+        }
     }
 }
