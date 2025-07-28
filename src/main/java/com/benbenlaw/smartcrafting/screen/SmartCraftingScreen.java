@@ -18,11 +18,13 @@ import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.item.crafting.*;
+import net.neoforged.neoforge.event.level.BlockEvent;
 import net.neoforged.neoforge.network.PacketDistributor;
 import org.jetbrains.annotations.NotNull;
 import org.lwjgl.glfw.GLFW;
 
 import java.util.*;
+import java.util.stream.Collectors;
 
 public class SmartCraftingScreen extends AbstractContainerScreen<SmartCraftingMenu> {
     private static final ResourceLocation TEXTURE =
@@ -50,7 +52,10 @@ public class SmartCraftingScreen extends AbstractContainerScreen<SmartCraftingMe
         this.clientRecipes = new ArrayList<>(recipes);
 
         // Sort by mod ID lexicographically
-        this.clientRecipes.sort(Comparator.comparing(r -> r.id().getNamespace()));
+        this.clientRecipes = recipes.stream()
+                .filter(r -> !r.value().getResultItem(menu.level.registryAccess()).isEmpty())
+                .sorted(Comparator.comparing(r -> r.id().getNamespace()))
+                .collect(Collectors.toList());
 
         updateFilteredRecipes();
         moveSelectedRecipeToFront();
