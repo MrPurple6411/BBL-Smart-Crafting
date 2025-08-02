@@ -1,8 +1,12 @@
 Changelog Smart Crafting Table
 
+1.1.13
+Fixed typo
+
 1.1.12
 Mod Sorting button now persists between world loads
-
+Can now favourite recipes by right clicking on the recipe
+Favourite recipes will be shown first in the list with a star next to them
 
 1.1.11
 Updated Logo
