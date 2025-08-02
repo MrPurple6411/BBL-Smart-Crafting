@@ -7,25 +7,23 @@ import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerPlayer;
-import net.minecraft.sounds.SoundEvent;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
+import net.minecraft.world.entity.player.Player;
 import net.neoforged.neoforge.network.handling.IPayloadHandler;
 
-public record SyncSortType(String sortType) implements CustomPacketPayload {
+public record SyncSortTypeClient(String sortType) implements CustomPacketPayload {
 
-    public static final Type<SyncSortType> TYPE = new Type<>(ResourceLocation.fromNamespaceAndPath(SmartCrafting.MOD_ID,"sync_sort_type"));
+    public static final Type<SyncSortTypeClient> TYPE = new Type<>(ResourceLocation.fromNamespaceAndPath(SmartCrafting.MOD_ID,"sync_sort_type_clieny"));
 
-
-    public static final IPayloadHandler<SyncSortType> HANDLER = (pkt, ctx) -> {
-        ServerPlayer player = (ServerPlayer) ctx.player();
+    public static final IPayloadHandler<SyncSortTypeClient> HANDLER = (pkt, ctx) -> {
+        Player player = ctx.player();
         player.getPersistentData().putString("smart_crafting_sort_type", pkt.sortType);
-        player.playNotifySound(SoundEvents.LEVER_CLICK, SoundSource.PLAYERS, 1.0F, 1.0F);
     };
 
-    public static final StreamCodec<RegistryFriendlyByteBuf, SyncSortType> STREAM_CODEC = StreamCodec.composite(
-            ByteBufCodecs.STRING_UTF8, SyncSortType::sortType,
-            SyncSortType::new
+    public static final StreamCodec<RegistryFriendlyByteBuf, SyncSortTypeClient> STREAM_CODEC = StreamCodec.composite(
+            ByteBufCodecs.STRING_UTF8, SyncSortTypeClient::sortType,
+            SyncSortTypeClient::new
     );
 
 

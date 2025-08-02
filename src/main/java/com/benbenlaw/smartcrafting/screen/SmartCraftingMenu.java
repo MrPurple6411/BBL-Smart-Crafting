@@ -1,8 +1,12 @@
 package com.benbenlaw.smartcrafting.screen;
 
+import com.benbenlaw.smartcrafting.networking.packets.SyncFavouriteRecipesClient;
+import com.benbenlaw.smartcrafting.networking.packets.SyncSortTypeClient;
 import com.benbenlaw.smartcrafting.networking.payload.SmartCraftingRecipePayload;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.NonNullList;
+import net.minecraft.nbt.ListTag;
+import net.minecraft.nbt.Tag;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
@@ -29,6 +33,8 @@ import net.neoforged.neoforge.network.PacketDistributor;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.*;
+
+import static com.benbenlaw.smartcrafting.screen.SmartCraftingScreen.FAVORITES_TAG;
 
 public class SmartCraftingMenu extends AbstractContainerMenu {
 
@@ -58,6 +64,10 @@ public class SmartCraftingMenu extends AbstractContainerMenu {
 
         if (!level.isClientSide) {
             updateValidRecipes();
+            PacketDistributor.sendToPlayer((ServerPlayer) inventory.player, new SyncSortTypeClient(player.getPersistentData().getString("smart_crafting_sort_type")));
+            ListTag listTag = player.getPersistentData().getList(FAVORITES_TAG, Tag.TAG_STRING);
+            List<String> favorites = listTag.stream().map(Tag::getAsString).toList();
+            PacketDistributor.sendToPlayer((ServerPlayer) inventory.player, new SyncFavouriteRecipesClient(favorites));
         }
 
         checkContainerSize(inventory, 2);
