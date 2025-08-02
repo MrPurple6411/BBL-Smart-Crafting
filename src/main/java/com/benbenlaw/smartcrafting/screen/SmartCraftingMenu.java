@@ -1,6 +1,6 @@
 package com.benbenlaw.smartcrafting.screen;
 
-import com.benbenlaw.smartcrafting.networking.packets.SyncFavouriteRecipesClient;
+import com.benbenlaw.smartcrafting.networking.packets.SyncFavoriteRecipesClient;
 import com.benbenlaw.smartcrafting.networking.packets.SyncSortTypeClient;
 import com.benbenlaw.smartcrafting.networking.payload.SmartCraftingRecipePayload;
 import net.minecraft.core.BlockPos;
@@ -8,7 +8,6 @@ import net.minecraft.core.NonNullList;
 import net.minecraft.nbt.ListTag;
 import net.minecraft.nbt.Tag;
 import net.minecraft.network.FriendlyByteBuf;
-import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.sounds.SoundEvents;
@@ -18,17 +17,13 @@ import net.minecraft.world.SimpleContainer;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.inventory.*;
-import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.crafting.*;
 import net.minecraft.world.level.Level;
-import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
-import net.minecraft.world.level.block.entity.BaseContainerBlockEntity;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.neoforged.neoforge.capabilities.Capabilities;
 import net.neoforged.neoforge.items.IItemHandler;
-import net.neoforged.neoforge.items.wrapper.PlayerInvWrapper;
 import net.neoforged.neoforge.network.PacketDistributor;
 import org.jetbrains.annotations.NotNull;
 
@@ -67,7 +62,7 @@ public class SmartCraftingMenu extends AbstractContainerMenu {
             PacketDistributor.sendToPlayer((ServerPlayer) inventory.player, new SyncSortTypeClient(player.getPersistentData().getString("smart_crafting_sort_type")));
             ListTag listTag = player.getPersistentData().getList(FAVORITES_TAG, Tag.TAG_STRING);
             List<String> favorites = listTag.stream().map(Tag::getAsString).toList();
-            PacketDistributor.sendToPlayer((ServerPlayer) inventory.player, new SyncFavouriteRecipesClient(favorites));
+            PacketDistributor.sendToPlayer((ServerPlayer) inventory.player, new SyncFavoriteRecipesClient(favorites));
         }
 
         checkContainerSize(inventory, 2);

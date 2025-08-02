@@ -1,7 +1,7 @@
 package com.benbenlaw.smartcrafting.screen;
 
 import com.benbenlaw.smartcrafting.SmartCrafting;
-import com.benbenlaw.smartcrafting.networking.packets.SyncFavouriteRecipes;
+import com.benbenlaw.smartcrafting.networking.packets.SyncFavoriteRecipes;
 import com.benbenlaw.smartcrafting.networking.packets.SyncSortType;
 import com.benbenlaw.smartcrafting.networking.payload.SmartCraftingRecipeClickPayload;
 import com.benbenlaw.smartcrafting.util.MouseUtil;
@@ -22,9 +22,7 @@ import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.item.crafting.*;
-import net.neoforged.neoforge.event.level.BlockEvent;
 import net.neoforged.neoforge.network.PacketDistributor;
-import org.jetbrains.annotations.NotNull;
 import org.lwjgl.glfw.GLFW;
 
 import java.util.*;
@@ -48,7 +46,7 @@ public class SmartCraftingScreen extends AbstractContainerScreen<SmartCraftingMe
     static final ResourceLocation MODE_BUTTON_SPRITE =
             ResourceLocation.fromNamespaceAndPath(SmartCrafting.MOD_ID,"textures/gui/mode_button.png");
     static final ResourceLocation STAR_ICON =
-            ResourceLocation.fromNamespaceAndPath(SmartCrafting.MOD_ID,"textures/gui/favourite.png");
+            ResourceLocation.fromNamespaceAndPath(SmartCrafting.MOD_ID,"textures/gui/favorite.png");
 
     public static final String FAVORITES_TAG = "smart_crafting_favorites";
     private List<RecipeHolder<?>> clientRecipes = Collections.emptyList();
@@ -87,7 +85,7 @@ public class SmartCraftingScreen extends AbstractContainerScreen<SmartCraftingMe
         menu.player.getPersistentData().put(FAVORITES_TAG, newList);
 
         List<String> favList = new ArrayList<>(favorites);
-        PacketDistributor.sendToServer(new SyncFavouriteRecipes(favList));
+        PacketDistributor.sendToServer(new SyncFavoriteRecipes(favList));
     }
 
     // Slot size and layout

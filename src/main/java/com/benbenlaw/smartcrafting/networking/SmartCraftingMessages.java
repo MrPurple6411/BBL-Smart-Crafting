@@ -13,11 +13,11 @@ public class SmartCraftingMessages {
         final PayloadRegistrar registrar = event.registrar(SmartCrafting.MOD_ID);
 
         registrar.playToServer(SyncSortType.TYPE, SyncSortType.STREAM_CODEC, SyncSortType.HANDLER);
-        registrar.playToServer(SyncFavouriteRecipes.TYPE, SyncFavouriteRecipes.STREAM_CODEC, SyncFavouriteRecipes.HANDLER);
+        registrar.playToServer(SyncFavoriteRecipes.TYPE, SyncFavoriteRecipes.STREAM_CODEC, SyncFavoriteRecipes.HANDLER);
         registrar.playToServer(SmartCraftingRecipeClickPayload.TYPE, SmartCraftingRecipeClickPayload.STREAM_CODEC, SmartCraftingRecipeClickPacket.get()::handle);
 
         registrar.playToClient(SyncSortTypeClient.TYPE, SyncSortTypeClient.STREAM_CODEC, SyncSortTypeClient.HANDLER);
-        registrar.playToClient(SyncFavouriteRecipesClient.TYPE, SyncFavouriteRecipesClient.STREAM_CODEC, SyncFavouriteRecipesClient.HANDLER);
+        registrar.playToClient(SyncFavoriteRecipesClient.TYPE, SyncFavoriteRecipesClient.STREAM_CODEC, SyncFavoriteRecipesClient.HANDLER);
         registrar.playToClient(SmartCraftingRecipePayload.TYPE, SmartCraftingRecipePayload.STREAM_CODEC, SmartCraftingRecipePacket.get()::handle);
     }
 }
