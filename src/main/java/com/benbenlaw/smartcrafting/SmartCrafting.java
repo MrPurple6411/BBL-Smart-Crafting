@@ -50,10 +50,13 @@ public class SmartCrafting {
         public static void registerScreens(RegisterMenuScreensEvent event) {
             event.register(SmartCraftingMenus.SMART_CRAFTING_MENU.get(), SmartCraftingScreen::new);
         }
+
+
     }
 
     public void commonSetup(RegisterPayloadHandlersEvent event) {
         SmartCraftingMessages.registerNetworking(event);
+
     }
 
     public void addCreativeTabContents(BuildCreativeModeTabContentsEvent event) {
@@ -69,9 +72,13 @@ public class SmartCrafting {
             } else {
                 event.accept(new ItemStack(SmartCraftingBlocks.SMART_CRAFTING_TABLE.get()), CreativeModeTab.TabVisibility.PARENT_AND_SEARCH_TABS);
             }
+        }
 
-            // Always add portable one
-            event.accept(new ItemStack(SmartCraftingItems.PORTABLE_SMART_CRAFTING_TABLE.get()), CreativeModeTab.TabVisibility.PARENT_AND_SEARCH_TABS);
+        if (event.getTabKey() == CreativeModeTabs.TOOLS_AND_UTILITIES) {
+            event.accept(
+                    new ItemStack(SmartCraftingItems.PORTABLE_SMART_CRAFTING_TABLE.get()),
+                    CreativeModeTab.TabVisibility.PARENT_AND_SEARCH_TABS
+            );
         }
     }
 }
