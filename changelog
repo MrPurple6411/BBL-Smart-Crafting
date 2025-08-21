@@ -1,5 +1,13 @@
 Changelog Smart Crafting Table
 
+1.2.1
+Added Portable Smart Crafting Table
+
+1.2.0
+Added Config for the range check of both the nearby inventories and stonecutters
+Added "smartcrafting:banned_storage" tag to disable blocks with inventories that you do not want the Smart Crafting Table to
+    craft from. Furnace, Blast Furnace, Smoker, Brewing Stand are added by default.
+
 1.1.13
 Changed favourite to favorite
 

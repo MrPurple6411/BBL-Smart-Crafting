@@ -1,5 +1,6 @@
 package com.benbenlaw.smartcrafting;
 
+import com.benbenlaw.smartcrafting.config.SmartCraftingConfig;
 import com.benbenlaw.smartcrafting.item.SmartCraftingItems;
 import com.benbenlaw.smartcrafting.block.SmartCraftingBlocks;
 import com.benbenlaw.smartcrafting.networking.SmartCraftingMessages;
@@ -13,8 +14,10 @@ import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.ModContainer;
+import net.neoforged.fml.ModLoadingContext;
 import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.fml.common.Mod;
+import net.neoforged.fml.config.ModConfig;
 import net.neoforged.neoforge.client.event.RegisterMenuScreensEvent;
 import net.neoforged.neoforge.event.BuildCreativeModeTabContentsEvent;
 import net.neoforged.neoforge.network.event.RegisterPayloadHandlersEvent;
@@ -37,6 +40,8 @@ public class SmartCrafting {
         eventBus.addListener(this::commonSetup);
         eventBus.addListener(this::addCreativeTabContents);
 
+        ModLoadingContext.get().getActiveContainer().registerConfig(ModConfig.Type.STARTUP, SmartCraftingConfig.SPEC, "smartcrafting.toml");
+
     }
 
     @EventBusSubscriber(bus = EventBusSubscriber.Bus.MOD)
@@ -45,13 +50,10 @@ public class SmartCrafting {
         public static void registerScreens(RegisterMenuScreensEvent event) {
             event.register(SmartCraftingMenus.SMART_CRAFTING_MENU.get(), SmartCraftingScreen::new);
         }
-
-
     }
 
     public void commonSetup(RegisterPayloadHandlersEvent event) {
         SmartCraftingMessages.registerNetworking(event);
-
     }
 
     public void addCreativeTabContents(BuildCreativeModeTabContentsEvent event) {
@@ -65,9 +67,11 @@ public class SmartCrafting {
                 ItemStack smartCraftingTable = new ItemStack(SmartCraftingBlocks.SMART_CRAFTING_TABLE.get());
                 event.insertAfter(craftingTable, smartCraftingTable, CreativeModeTab.TabVisibility.PARENT_AND_SEARCH_TABS);
             } else {
-
                 event.accept(new ItemStack(SmartCraftingBlocks.SMART_CRAFTING_TABLE.get()), CreativeModeTab.TabVisibility.PARENT_AND_SEARCH_TABS);
             }
+
+            // Always add portable one
+            event.accept(new ItemStack(SmartCraftingItems.PORTABLE_SMART_CRAFTING_TABLE.get()), CreativeModeTab.TabVisibility.PARENT_AND_SEARCH_TABS);
         }
     }
 }

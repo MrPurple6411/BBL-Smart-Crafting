@@ -1,8 +1,10 @@
 package com.benbenlaw.smartcrafting.screen;
 
+import com.benbenlaw.smartcrafting.config.SmartCraftingConfig;
 import com.benbenlaw.smartcrafting.networking.packets.SyncFavoriteRecipesClient;
 import com.benbenlaw.smartcrafting.networking.packets.SyncSortTypeClient;
 import com.benbenlaw.smartcrafting.networking.payload.SmartCraftingRecipePayload;
+import com.benbenlaw.smartcrafting.util.SmartCraftingTags;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.NonNullList;
 import net.minecraft.nbt.ListTag;
@@ -72,9 +74,9 @@ public class SmartCraftingMenu extends AbstractContainerMenu {
     }
 
     public void updateValidRecipes() {
-        if (level.isClientSide) return; // Safety check
+        if (level.isClientSide) return;
 
-        List<RecipeHolder<?>> recipes = getValidRecipes(); // Accept all recipe types
+        List<RecipeHolder<?>> recipes = getValidRecipes();
 
         List<ResourceLocation> recipeIds = recipes.stream()
                 .map(RecipeHolder::id)
@@ -130,14 +132,14 @@ public class SmartCraftingMenu extends AbstractContainerMenu {
 
     private List<IItemHandler> findConnectedItemHandlers() {
         List<IItemHandler> itemHandlers = new ArrayList<>();
-        final int radius = 3;
+        final int radius = SmartCraftingConfig.storageRangeCheck.get();
 
         BlockPos.betweenClosedStream(
-                blockPos.offset(-radius, -2, -radius),
-                blockPos.offset(radius, 2, radius)
+                blockPos.offset(-radius, -radius/2, -radius),
+                blockPos.offset(radius, radius/2, radius)
         ).forEach(pos -> {
             BlockEntity be = level.getBlockEntity(pos);
-            if (be != null) {
+            if (be != null && !level.getBlockState(pos).is(SmartCraftingTags.Blocks.BANNED_STORAGE)) {
                 IItemHandler handler = Capabilities.ItemHandler.BLOCK
                         .getCapability(level, pos, level.getBlockState(pos), be, null);
                 if (handler != null) {
@@ -186,8 +188,6 @@ public class SmartCraftingMenu extends AbstractContainerMenu {
                 ItemStack stack = handler.getStackInSlot(i);
                 if (!stack.isEmpty() && ingredient.test(stack)) {
                     int toTake = Math.min(stack.getCount(), remaining);
-
-                    // Try simulate then execute
                     ItemStack extracted = handler.extractItem(i, toTake, false);
                     if (!extracted.isEmpty()) {
                         remaining -= extracted.getCount();
@@ -214,13 +214,12 @@ public class SmartCraftingMenu extends AbstractContainerMenu {
         return remaining <= 0;
     }
 
-
     private boolean isStonecutterNearby(Player player) {
-        final int radius = 3;
+        final int radius = SmartCraftingConfig.stonecutterRangeCheck.get();
         BlockPos playerPos = player.blockPosition();
 
         for (int dx = -radius; dx <= radius; dx++) {
-            for (int dy = -2; dy <= 2; dy++) { // Vertical range - tweak as needed
+            for (int dy = -radius; dy <= radius; dy++) { // Now full radius vertically
                 for (int dz = -radius; dz <= radius; dz++) {
                     BlockPos checkPos = playerPos.offset(dx, dy, dz);
                     if (level.getBlockState(checkPos).is(Blocks.STONECUTTER)) {
@@ -308,8 +307,6 @@ public class SmartCraftingMenu extends AbstractContainerMenu {
         return CraftingInput.ofPositioned(3, 3, grid).input();
     }
 
-
-
     public void craftRecipeById(ResourceLocation recipeId, boolean shiftClick) {
         if (level.isClientSide) return;
 
@@ -348,7 +345,6 @@ public class SmartCraftingMenu extends AbstractContainerMenu {
                     int needed = entry.getValue();
 
                     if (!consumeIngredientFromAll(ingredient, needed)) {
-                        // Could not consume enough ingredients from all sources, stop crafting
                         return;
                     }
                 }
@@ -367,16 +363,13 @@ public class SmartCraftingMenu extends AbstractContainerMenu {
             return;
         }
 
-        // Stonecutter handling unchanged ...
         if (recipeHolder instanceof StonecutterRecipe stonecutterRecipe) {
             int maxCrafts = shiftClick ? getMaxCraftableAmountStonecutter(stonecutterRecipe) : 1;
 
             for (int i = 0; i < maxCrafts; i++) {
                 Container combinedInv = buildCombinedInventory();
-
                 if (!canCraftStonecutterFromInventory(stonecutterRecipe, combinedInv)) break;
-
-                ItemStack result = stonecutterRecipe.assemble(null, level.registryAccess()); // input param can be null
+                ItemStack result = stonecutterRecipe.assemble(null, level.registryAccess());
 
                 if (!player.getInventory().add(result.copy())) {
                     player.drop(result.copy(), false);
@@ -392,45 +385,6 @@ public class SmartCraftingMenu extends AbstractContainerMenu {
         }
     }
 
-
-    private boolean consumeIngredients(CraftingRecipe recipe, Inventory inventory) {
-        List<Ingredient> ingredients = recipe.getIngredients();
-        int[] usedSlots = new int[inventory.getContainerSize()];
-
-        // Verify all ingredients can be satisfied
-        for (Ingredient ingredient : ingredients) {
-            boolean found = false;
-            for (int i = 0; i < inventory.getContainerSize(); i++) {
-                ItemStack stack = inventory.getItem(i);
-                if (!stack.isEmpty() && ingredient.test(stack) && usedSlots[i] < stack.getCount()) {
-                    found = true;
-                    usedSlots[i]++;
-                    break;
-                }
-            }
-            if (!found) return false; // Can't satisfy this ingredient
-        }
-
-        // Consume items
-        usedSlots = new int[inventory.getContainerSize()]; // Reset to do actual consumption
-        for (Ingredient ingredient : ingredients) {
-            for (int i = 0; i < inventory.getContainerSize(); i++) {
-                ItemStack stack = inventory.getItem(i);
-                if (!stack.isEmpty() && ingredient.test(stack) && usedSlots[i] < stack.getCount()) {
-                    stack.shrink(1);
-                    if (stack.isEmpty()) {
-                        inventory.setItem(i, ItemStack.EMPTY);
-                    }
-                    usedSlots[i]++;
-                    break;
-                }
-            }
-        }
-
-        return true;
-    }
-
-
     private boolean recipeHasMatchingIngredients(Recipe<?> recipe, Container inv) {
 
         if (recipe instanceof CraftingRecipe craftingRecipe) {
@@ -444,7 +398,7 @@ public class SmartCraftingMenu extends AbstractContainerMenu {
                         break;
                     }
                 }
-                if (!found) return false; // Missing ingredient
+                if (!found) return false;
             }
             return true;
         }
@@ -491,7 +445,7 @@ public class SmartCraftingMenu extends AbstractContainerMenu {
     }
 
     private boolean consumeIngredientsStonecutter(StonecutterRecipe recipe, Container container) {
-        Ingredient ingredient = recipe.getIngredients().get(0); // Usually one ingredient
+        Ingredient ingredient = recipe.getIngredients().getFirst(); // Usually one ingredient
 
         for (int i = 0; i < container.getContainerSize(); i++) {
             ItemStack stack = container.getItem(i);
@@ -527,8 +481,6 @@ public class SmartCraftingMenu extends AbstractContainerMenu {
         return Math.max(0, Math.min(max, 64));
     }
 
-
-
     @Override
     public void broadcastChanges() {
         super.broadcastChanges();
@@ -549,7 +501,6 @@ public class SmartCraftingMenu extends AbstractContainerMenu {
         }
 
         if (changed) {
-            // Update the snapshot
             for (int i = 0; i < current.size(); i++) {
                 lastInventorySnapshot.set(i, current.get(i).copy());
             }
@@ -565,7 +516,6 @@ public class SmartCraftingMenu extends AbstractContainerMenu {
     public boolean stillValid(@NotNull Player player) {
         return true;
     }
-
 
     private void addPlayerInventory(Inventory playerInventory) {
         for (int i = 0; i < 3; ++i) {
