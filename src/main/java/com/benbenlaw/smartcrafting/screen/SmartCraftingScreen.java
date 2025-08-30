@@ -156,6 +156,11 @@ public class SmartCraftingScreen extends AbstractContainerScreen<SmartCraftingMe
         // Filter by search text
         if (lastSearchText.isEmpty()) {
             filteredRecipes = new ArrayList<>(clientRecipes);
+        } else if (lastSearchText.startsWith("@")) {
+            String modID = lastSearchText.substring(1);
+            filteredRecipes = clientRecipes.stream()
+                    .filter(holder -> holder.id().getNamespace().toLowerCase(Locale.ROOT).contains(modID))
+                    .toList();
         } else {
             filteredRecipes = clientRecipes.stream()
                     .filter(holder -> {

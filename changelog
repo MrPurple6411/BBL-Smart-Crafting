@@ -1,5 +1,9 @@
 Changelog Smart Crafting Table
 
+1.2.5
+Updated to neoforge 21.1.203
+Can now use @mod to search for recipes from a specific mod
+
 1.2.4
 Moved config to bbl/smartcrafting.toml
 Now auto updates with server and client environments for curse forge

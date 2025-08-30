@@ -44,7 +44,7 @@ public class SmartCrafting {
 
     }
 
-    @EventBusSubscriber(bus = EventBusSubscriber.Bus.MOD)
+    @EventBusSubscriber(modid = SmartCrafting.MOD_ID)
     public static class ClientModEvents {
         @SubscribeEvent
         public static void registerScreens(RegisterMenuScreensEvent event) {
