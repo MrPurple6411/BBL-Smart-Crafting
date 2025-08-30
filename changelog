@@ -1,5 +1,15 @@
 Changelog Smart Crafting Table
 
+1.2.4
+Moved config to bbl/smartcrafting.toml
+Now auto updates with server and client environments for curse forge
+Fixed double chests counting as two separate inventories and causing duplication bugs
+Removed unused methods
+Smart Crafting Table now uses items from the player's inventory first before checking nearby inventories
+
+1.2.3
+Fixed stonecutter recipe not always consuming the recipe input
+
 1.2.2
 Added Portable Smart Crafting Table to the Tools and Utilities tab in the creative menu
 

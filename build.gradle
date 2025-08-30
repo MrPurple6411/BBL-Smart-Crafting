@@ -136,6 +136,7 @@ tasks.register('publishCurseForge', TaskPublishCurseForge) {
     mainFile.addOptional("jei") // JEI
     mainFile.releaseType = "release"
     mainFile.gameVersions.addAll(minecraft_version)
+    mainFile.addEnvironment("server", "client")
 }
 
 tasks.getByName("modrinth").setGroup("modpublishing")

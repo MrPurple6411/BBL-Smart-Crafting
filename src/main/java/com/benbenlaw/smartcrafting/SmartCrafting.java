@@ -40,7 +40,7 @@ public class SmartCrafting {
         eventBus.addListener(this::commonSetup);
         eventBus.addListener(this::addCreativeTabContents);
 
-        ModLoadingContext.get().getActiveContainer().registerConfig(ModConfig.Type.STARTUP, SmartCraftingConfig.SPEC, "smartcrafting.toml");
+        ModLoadingContext.get().getActiveContainer().registerConfig(ModConfig.Type.STARTUP, SmartCraftingConfig.SPEC, "bbl/smartcrafting.toml");
 
     }
 

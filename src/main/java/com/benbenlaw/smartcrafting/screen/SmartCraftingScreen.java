@@ -740,6 +740,7 @@ public class SmartCraftingScreen extends AbstractContainerScreen<SmartCraftingMe
                 guiGraphics.renderTooltip(font,
                         Component.translatable("block.smartcrafting.smart_crafting_table.sort_by_name")
                                 .withStyle(ChatFormatting.WHITE), mouseX, mouseY);
+
             } else {
                 guiGraphics.renderTooltip(font,
                         Component.translatable("block.smartcrafting.smart_crafting_table.sort_by_mod")
