@@ -27,6 +27,7 @@ import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.ChestBlock;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.entity.ChestBlockEntity;
+import net.minecraft.world.level.block.state.properties.ChestType;
 import net.neoforged.neoforge.capabilities.Capabilities;
 import net.neoforged.neoforge.items.IItemHandler;
 import net.neoforged.neoforge.network.PacketDistributor;
@@ -148,11 +149,15 @@ public class SmartCraftingMenu extends AbstractContainerMenu {
             if (be != null && level.getBlockState(pos).is(SmartCraftingTags.Blocks.WHITELISTED_STORAGE)) {
 
                 if (be instanceof ChestBlockEntity chest) {
-                    Direction dir = ChestBlock.getConnectedDirection(chest.getBlockState());
-                    if (dir != null) {
-                        BlockPos otherPos = pos.relative(dir);
-                        if (otherPos.compareTo(pos) < 0) {
-                            return;
+
+                    ChestType type = chest.getBlockState().getValue(ChestBlock.TYPE);
+                    if (type != ChestType.SINGLE) {
+                        Direction dir = ChestBlock.getConnectedDirection(chest.getBlockState());
+                        if (dir != null) {
+                            BlockPos otherPos = pos.relative(dir);
+                            if (otherPos.compareTo(pos) < 0) {
+                                return;
+                            }
                         }
                     }
                 }

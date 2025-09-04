@@ -1,5 +1,8 @@
 Changelog Smart Crafting Table
 
+1.2.7
+Fixed Single Chests in certain orientations not being detected as nearby inventories
+
 1.2.6
 Smart Crafting now uses a whitelist tag instead of a blacklist tag for nearby inventories
 Chests and Barrels are added to the whitelist by default
