@@ -1,5 +1,9 @@
 Changelog Smart Crafting Table
 
+1.2.6
+Smart Crafting now uses a whitelist tag instead of a blacklist tag for nearby inventories
+Chests and Barrels are added to the whitelist by default
+
 1.2.5
 Updated to neoforge 21.1.203
 Can now use @mod to search for recipes from a specific mod

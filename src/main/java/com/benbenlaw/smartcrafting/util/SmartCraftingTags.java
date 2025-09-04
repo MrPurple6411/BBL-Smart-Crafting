@@ -9,8 +9,8 @@ import net.minecraft.world.level.block.Block;
 public class SmartCraftingTags {
 
     public static class Blocks {
-        public static final TagKey<Block> BANNED_STORAGE = TagKey.create(
-                BuiltInRegistries.BLOCK.key(), ResourceLocation.fromNamespaceAndPath(SmartCrafting.MOD_ID, "banned_storage")
+        public static final TagKey<Block> WHITELISTED_STORAGE = TagKey.create(
+                BuiltInRegistries.BLOCK.key(), ResourceLocation.fromNamespaceAndPath(SmartCrafting.MOD_ID, "whitelisted_storage")
         );
     }
 }

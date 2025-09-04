@@ -145,7 +145,7 @@ public class SmartCraftingMenu extends AbstractContainerMenu {
                 blockPos.offset(radius, radius / 2, radius)
         ).forEach(pos -> {
             BlockEntity be = level.getBlockEntity(pos);
-            if (be != null && !level.getBlockState(pos).is(SmartCraftingTags.Blocks.BANNED_STORAGE)) {
+            if (be != null && level.getBlockState(pos).is(SmartCraftingTags.Blocks.WHITELISTED_STORAGE)) {
 
                 if (be instanceof ChestBlockEntity chest) {
                     Direction dir = ChestBlock.getConnectedDirection(chest.getBlockState());
