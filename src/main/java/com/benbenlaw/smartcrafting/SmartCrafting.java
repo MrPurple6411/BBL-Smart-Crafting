@@ -6,6 +6,7 @@ import com.benbenlaw.smartcrafting.block.SmartCraftingBlocks;
 import com.benbenlaw.smartcrafting.networking.SmartCraftingMessages;
 import com.benbenlaw.smartcrafting.screen.SmartCraftingMenus;
 import com.benbenlaw.smartcrafting.screen.SmartCraftingScreen;
+import com.benbenlaw.smartcrafting.util.KeyBinds;
 import net.minecraft.world.item.CreativeModeTab;
 import net.minecraft.world.item.CreativeModeTabs;
 import net.minecraft.world.item.ItemStack;
@@ -18,6 +19,7 @@ import net.neoforged.fml.ModLoadingContext;
 import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.fml.common.Mod;
 import net.neoforged.fml.config.ModConfig;
+import net.neoforged.neoforge.client.event.RegisterKeyMappingsEvent;
 import net.neoforged.neoforge.client.event.RegisterMenuScreensEvent;
 import net.neoforged.neoforge.event.BuildCreativeModeTabContentsEvent;
 import net.neoforged.neoforge.network.event.RegisterPayloadHandlersEvent;
@@ -44,14 +46,17 @@ public class SmartCrafting {
 
     }
 
-    @EventBusSubscriber(modid = SmartCrafting.MOD_ID)
+    @EventBusSubscriber(modid = SmartCrafting.MOD_ID, value = Dist.CLIENT)
     public static class ClientModEvents {
         @SubscribeEvent
         public static void registerScreens(RegisterMenuScreensEvent event) {
             event.register(SmartCraftingMenus.SMART_CRAFTING_MENU.get(), SmartCraftingScreen::new);
         }
 
-
+        @SubscribeEvent
+        public static void registerKeyBindings(RegisterKeyMappingsEvent event) {
+            event.register(KeyBinds.OPEN_SMART_CRAFTING_MENU_HOTKEY);
+        }
     }
 
     public void commonSetup(RegisterPayloadHandlersEvent event) {

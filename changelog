@@ -1,5 +1,9 @@
 Changelog Smart Crafting Table
 
+1.2.8
+portable Smart Crafting Table can now be opened by pressing c by default
+Also now supports curios slots
+
 1.2.7
 Fixed Single Chests in certain orientations not being detected as nearby inventories
 

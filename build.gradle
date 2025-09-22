@@ -69,6 +69,12 @@ dependencies {
     //JEI
     compileOnly "curse.maven:jei-238222:5606861"
     runtimeOnly "curse.maven:jei-238222:5606861"
+
+    //Curio
+    implementation("curse.maven:curios-309927:6529130") {
+        exclude group: 'net.neoforged', module: 'neoforge'
+    }
+
 }
 
 tasks.withType(ProcessResources).configureEach {
