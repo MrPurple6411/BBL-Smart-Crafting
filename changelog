@@ -1,5 +1,8 @@
 Changelog Smart Crafting Table
 
+1.2.9
+Fixed crashing on server startup
+
 1.2.8
 portable Smart Crafting Table can now be opened by pressing c by default
 Also now supports curios slots

@@ -4,6 +4,7 @@ import com.mojang.blaze3d.platform.InputConstants;
 import net.minecraft.client.KeyMapping;
 import net.neoforged.neoforge.client.settings.KeyConflictContext;
 
+
 public class KeyBinds {
 
     public static final String KEY_CATEGORY = "key.category.smartcrafting";
