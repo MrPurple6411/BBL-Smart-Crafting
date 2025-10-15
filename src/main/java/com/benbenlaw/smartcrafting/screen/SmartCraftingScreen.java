@@ -22,6 +22,9 @@ import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.item.crafting.*;
+import net.neoforged.fml.ModList;
+import net.minecraft.tags.TagKey;
+import net.minecraft.world.item.TooltipFlag;
 import net.neoforged.neoforge.network.PacketDistributor;
 import org.lwjgl.glfw.GLFW;
 
@@ -32,7 +35,6 @@ public class SmartCraftingScreen extends AbstractContainerScreen<SmartCraftingMe
     private static final ResourceLocation TEXTURE =
             ResourceLocation.fromNamespaceAndPath(SmartCrafting.MOD_ID, "textures/gui/smart_crafting_table.png");
 
-    private static final int TOOLTIP_SIZE = 62;
 
     private static final ResourceLocation CRAFTING_TOOLTIP_TEXTURE =
             ResourceLocation.fromNamespaceAndPath(SmartCrafting.MOD_ID, "textures/gui/smart_crafting_table_render.png");
@@ -50,20 +52,85 @@ public class SmartCraftingScreen extends AbstractContainerScreen<SmartCraftingMe
 
     public static final String FAVORITES_TAG = "smart_crafting_favorites";
     private List<RecipeHolder<?>> clientRecipes = Collections.emptyList();
+    // Server-provided maximum craft counts keyed by recipe id (single-step availability snapshot)
+    private final Map<ResourceLocation, Integer> serverCappedCrafts = new HashMap<>();
+    private final Map<ResourceLocation, Integer> serverRawCrafts = new HashMap<>();
+    private final Set<ResourceLocation> pendingRequests = new HashSet<>();
+    private long lastRequestMillis = 0L;
+    private long inventoryVersion = -1L;
+    // Track raw (pre-cap) crafts if we compute them (server currently caps); we infer by re-estimating locally if shift held
+    private static final int CRAFT_CAP = 4096;
+    private static final int LARGE_CRAFT_CONFIRM_THRESHOLD = 1000;
+    // Stores a confirmation window: recipe id -> timestamp (ms) of first shift click if requires confirmation
+    private ResourceLocation pendingLargeCraft = null;
+    private long pendingLargeCraftExpiresAt = 0L;
+
+    private static Set<String> extractRequestedTagNeedles(String raw) {
+        Set<String> needles = new HashSet<>();
+        if (raw == null || raw.isEmpty()) return needles;
+        List<String> tokens = AdvancedSearchQuery.tokenize(raw);
+        for (String token : tokens) {
+            if (token.equals("|")) continue;
+            // Inline OR components (avoid splitting phrases containing spaces)
+            if (token.indexOf(' ') >= 0) {
+                if (token.startsWith("$")) {
+                    String n = token.substring(1).toLowerCase(Locale.ROOT).trim();
+                    if (!n.isEmpty()) needles.add(n);
+                }
+            } else {
+                String[] parts = token.split("\\|");
+                for (String part : parts) {
+                    if (part.startsWith("$")) {
+                        String n = part.substring(1).toLowerCase(Locale.ROOT).trim();
+                        if (!n.isEmpty()) needles.add(n);
+                    }
+                }
+            }
+        }
+        return needles;
+    }
 
     public void setClientRecipes(List<RecipeHolder<?>> recipes) {
         this.clientRecipes = new ArrayList<>(recipes);
 
-        // Sort by mod ID lexicographically
+        // Sort by player-visible mod display name (fallback to namespace) then stable output key
         this.clientRecipes = recipes.stream()
-                .filter(r -> !r.value().getResultItem(menu.level.registryAccess()).isEmpty())
-                .sorted(Comparator.comparing(r -> r.id().getNamespace()))
-                .collect(Collectors.toList());
+            .filter(r -> !r.value().getResultItem(menu.level.registryAccess()).isEmpty())
+            .sorted(Comparator.comparing((RecipeHolder<?> r) -> outputModDisplayNameLower(r))
+                .thenComparing(r -> outputSortKey(r)))
+            .collect(Collectors.toList());
 
         updateFilteredRecipes();
         moveSelectedRecipeToFront();
 
         scrollOffset = 0;
+    }
+
+    public void setClientRecipesWithMax(List<RecipeHolder<?>> recipes, Map<ResourceLocation, Integer> capped, Map<ResourceLocation, Integer> raw, long version) {
+        this.serverCappedCrafts.clear();
+        this.serverRawCrafts.clear();
+        if (capped != null) this.serverCappedCrafts.putAll(capped);
+        if (raw != null) this.serverRawCrafts.putAll(raw);
+        this.inventoryVersion = version;
+        setClientRecipes(recipes);
+    }
+
+    public void mergeCounts(List<ResourceLocation> ids, List<Integer> capped, List<Integer> raw, long version) {
+        if (version != this.inventoryVersion) {
+            // Invalidate stale cache and replace version
+            this.serverCappedCrafts.clear();
+            this.serverRawCrafts.clear();
+            this.pendingRequests.clear();
+            this.inventoryVersion = version;
+        }
+        for (int i = 0; i < ids.size(); i++) {
+            ResourceLocation id = ids.get(i);
+            int cap = (i < capped.size()) ? capped.get(i) : -1;
+            int r = (i < raw.size()) ? raw.get(i) : cap;
+            if (cap >= 0) serverCappedCrafts.put(id, cap);
+            if (r >= 0) serverRawCrafts.put(id, r);
+            pendingRequests.remove(id);
+        }
     }
 
     public void toggleFavorite(ResourceLocation recipeId) {
@@ -104,9 +171,7 @@ public class SmartCraftingScreen extends AbstractContainerScreen<SmartCraftingMe
     private boolean isDraggingScrollbar = false;
     private ResourceLocation selectedRecipeId = null;
 
-    private static final int COLUMNS = 8;
     public static int visibleRows = 3;
-    private final int itemsPerPage = COLUMNS * visibleRows;
 
     private EditBox searchBox;
     private String lastSearchText = "";
@@ -138,7 +203,8 @@ public class SmartCraftingScreen extends AbstractContainerScreen<SmartCraftingMe
         searchBox = new EditBox(font, x, y, 141, 15, Component.literal("Search..."));
         searchBox.setMaxLength(50);
         searchBox.setResponder(this::onSearchTextChanged);
-        searchBox.setFocused(true);
+    // Do not auto-focus (JEI style: require user click unless they start typing and we hook key events later)
+    searchBox.setFocused(false);
         searchBox.setBordered(true);
         searchBox.setVisible(true);
 
@@ -153,49 +219,47 @@ public class SmartCraftingScreen extends AbstractContainerScreen<SmartCraftingMe
     }
 
     private void updateFilteredRecipes() {
-        // Filter by search text
         if (lastSearchText.isEmpty()) {
             filteredRecipes = new ArrayList<>(clientRecipes);
-        } else if (lastSearchText.startsWith("@")) {
-            String modID = lastSearchText.substring(1);
-            filteredRecipes = clientRecipes.stream()
-                    .filter(holder -> holder.id().getNamespace().toLowerCase(Locale.ROOT).contains(modID))
-                    .toList();
         } else {
-            filteredRecipes = clientRecipes.stream()
-                    .filter(holder -> {
-                        ItemStack result = holder.value().getResultItem(Minecraft.getInstance().level.registryAccess());
-                        String name = result.getHoverName().getString();
-                        return name.toLowerCase(Locale.ROOT).contains(lastSearchText);
-                    })
-                    .toList();
+            AdvancedSearchQuery query = AdvancedSearchQuery.parse(lastSearchText);
+            filteredRecipes = clientRecipes.stream().filter(r -> query.matches(r)).toList();
         }
 
         // Apply sorting
         if (currentSortType == SortType.MOD) {
             filteredRecipes = filteredRecipes.stream()
-                    .sorted(Comparator.comparing(r -> r.id().getNamespace()))
-                    .toList();
+                .sorted(Comparator.comparing((RecipeHolder<?> r) -> outputModDisplayNameLower(r))
+                    .thenComparing(r -> outputSortKey(r)))
+                .toList();
 
             if (selectedRecipeId != null) {
-                String selectedModId = selectedRecipeId.getNamespace();
+                // Derive the selected recipe's mod display name (lower) for grouping; fallback to namespace if not present
+                String selectedModDisplay = null;
+                for (RecipeHolder<?> r : filteredRecipes) {
+                    if (r.id().equals(selectedRecipeId)) {
+                        selectedModDisplay = outputModDisplayNameLower(r);
+                        break;
+                    }
+                }
+                if (selectedModDisplay == null) {
+                    // Fallback: best guess from recipe id namespace (rare: if selected recipe filtered out)
+                    selectedModDisplay = selectedRecipeId.getNamespace().toLowerCase(Locale.ROOT);
+                }
 
                 List<RecipeHolder<?>> selectedModRecipes = new ArrayList<>();
                 List<RecipeHolder<?>> otherModRecipes = new ArrayList<>();
-
                 for (RecipeHolder<?> recipe : filteredRecipes) {
-                    String recipeModId = recipe.id().getNamespace();
-                    if (recipeModId.equalsIgnoreCase(selectedModId)) {
+                    String recipeModDisplay = outputModDisplayNameLower(recipe);
+                    if (recipeModDisplay.equals(selectedModDisplay)) {
                         selectedModRecipes.add(recipe);
                     } else {
                         otherModRecipes.add(recipe);
                     }
                 }
-
-                List<RecipeHolder<?>> combined = new ArrayList<>();
+                List<RecipeHolder<?>> combined = new ArrayList<>(selectedModRecipes.size() + otherModRecipes.size());
                 combined.addAll(selectedModRecipes);
                 combined.addAll(otherModRecipes);
-
                 filteredRecipes = combined;
             }
         } else if (currentSortType == SortType.NAME) {
@@ -207,35 +271,92 @@ public class SmartCraftingScreen extends AbstractContainerScreen<SmartCraftingMe
                     .toList();
         }
 
-        // Sort with selected recipe at top, then favorites, then others
-        Set<String> favoriteIds = menu.player.getPersistentData()
-                .getList("smart_crafting_favorites", net.minecraft.nbt.Tag.TAG_STRING)
-                .stream()
-                .map(tag -> tag.getAsString())
-                .collect(Collectors.toSet());
+        // Global selected/favorites reordering ONLY for NAME sort. For MOD sort we keep contiguous mod groups.
+        if (currentSortType != SortType.MOD) {
+            Set<String> favoriteIds = menu.player.getPersistentData()
+                    .getList("smart_crafting_favorites", net.minecraft.nbt.Tag.TAG_STRING)
+                    .stream()
+                    .map(tag -> tag.getAsString())
+                    .collect(Collectors.toSet());
 
-        RecipeHolder<?> selectedRecipe = null;
-        List<RecipeHolder<?>> favoriteRecipes = new ArrayList<>();
-        List<RecipeHolder<?>> otherRecipes = new ArrayList<>();
+            RecipeHolder<?> selectedRecipe = null;
+            List<RecipeHolder<?>> favoriteRecipes = new ArrayList<>();
+            List<RecipeHolder<?>> otherRecipes = new ArrayList<>();
 
-        for (RecipeHolder<?> recipe : filteredRecipes) {
-            String idStr = recipe.id().toString();
-            if (selectedRecipeId != null && recipe.id().equals(selectedRecipeId)) {
-                selectedRecipe = recipe;
-            } else if (favoriteIds.contains(idStr)) {
-                favoriteRecipes.add(recipe);
-            } else {
-                otherRecipes.add(recipe);
+            for (RecipeHolder<?> recipe : filteredRecipes) {
+                String idStr = recipe.id().toString();
+                if (selectedRecipeId != null && recipe.id().equals(selectedRecipeId)) {
+                    selectedRecipe = recipe;
+                } else if (favoriteIds.contains(idStr)) {
+                    favoriteRecipes.add(recipe);
+                } else {
+                    otherRecipes.add(recipe);
+                }
             }
-        }
 
-        // Final assembly: selected -> favorites -> others
-        filteredRecipes = new ArrayList<>();
-        if (selectedRecipe != null) {
-            filteredRecipes.add(selectedRecipe);
+            // Final assembly: selected -> favorites -> others
+            filteredRecipes = new ArrayList<>();
+            if (selectedRecipe != null) {
+                filteredRecipes.add(selectedRecipe);
+            }
+            filteredRecipes.addAll(favoriteRecipes);
+            filteredRecipes.addAll(otherRecipes);
         }
-        filteredRecipes.addAll(favoriteRecipes);
-        filteredRecipes.addAll(otherRecipes);
+    }
+
+    private String outputModId(RecipeHolder<?> holder) {
+        try {
+            if (Minecraft.getInstance().level == null) return holder.id().getNamespace();
+            ItemStack stack = holder.value().getResultItem(Minecraft.getInstance().level.registryAccess());
+            if (stack.isEmpty()) return holder.id().getNamespace();
+            var key = net.minecraft.core.registries.BuiltInRegistries.ITEM.getKey(stack.getItem());
+            return key == null ? holder.id().getNamespace() : key.getNamespace();
+        } catch (Throwable t) {
+            return holder.id().getNamespace();
+        }
+    }
+
+    // Overload for ResourceLocation (selectedRecipeId)
+    private String outputModId(ResourceLocation recipeId) {
+        // Fallback: we don't have direct access to recipe output here, so recipe namespace is best guess
+        // (When the selected recipe is present in filteredRecipes we re-derive correct mod above.)
+        return recipeId.getNamespace();
+    }
+
+    private String outputSortKey(RecipeHolder<?> holder) {
+        try {
+            if (Minecraft.getInstance().level == null) return holder.id().toString();
+            ItemStack stack = holder.value().getResultItem(Minecraft.getInstance().level.registryAccess());
+            if (stack.isEmpty()) return holder.id().getPath();
+            // Prefer display name (lower) then item id path for stability
+            String name = stack.getHoverName().getString().toLowerCase(Locale.ROOT);
+            var key = net.minecraft.core.registries.BuiltInRegistries.ITEM.getKey(stack.getItem());
+            String path = key == null ? holder.id().getPath() : key.getPath();
+            return name + "|" + path;
+        } catch (Throwable t) {
+            return holder.id().toString();
+        }
+    }
+
+    // Cache for mod id -> display name lower (player visible); avoids repeated ModList lookups during sorting
+    private static final Map<String, String> MOD_DISPLAY_CACHE = new HashMap<>();
+
+    private static String modDisplayNameLower(String modId) {
+        return MOD_DISPLAY_CACHE.computeIfAbsent(modId, id -> {
+            String disp = id;
+            try {
+                var opt = ModList.get().getModContainerById(id);
+                if (opt.isPresent()) {
+                    disp = opt.get().getModInfo().getDisplayName();
+                }
+            } catch (Throwable ignored) {}
+            return disp.toLowerCase(Locale.ROOT);
+        });
+    }
+
+    private String outputModDisplayNameLower(RecipeHolder<?> holder) {
+        String modId = outputModId(holder).toLowerCase(Locale.ROOT);
+        return modDisplayNameLower(modId);
     }
 
 
@@ -358,19 +479,129 @@ public class SmartCraftingScreen extends AbstractContainerScreen<SmartCraftingMe
                 hoveredRecipeIndex = i;
 
                 List<Component> tooltip = new ArrayList<>();
-                tooltip.add(resultStack.getHoverName());
+                // Pull in full vanilla tooltip (name + enchantments, lore, modded additions) respecting advanced flag
+                Minecraft mc = Minecraft.getInstance();
+                TooltipFlag flag = mc.options.advancedItemTooltips ? TooltipFlag.Default.ADVANCED : TooltipFlag.Default.NORMAL;
+                try {
+                    var ctx = net.minecraft.world.item.Item.TooltipContext.of(mc.level);
+                    tooltip.addAll(resultStack.getTooltipLines(ctx, mc.player, flag));
+                } catch (Throwable t) {
+                    tooltip.add(resultStack.getHoverName());
+                }
 
+                // Spacer before Smart Crafting specific lines
+                tooltip.add(Component.empty());
+                // If current search query includes tag filters ($...), surface which tags matched this output for transparency
+                if (!lastSearchText.isEmpty() && lastSearchText.contains("$")) {
+                    Set<String> requestedTags = extractRequestedTagNeedles(lastSearchText);
+                    if (!requestedTags.isEmpty()) {
+                        List<String> matched = new ArrayList<>();
+                        // Collect item tags (lowercase RL string)
+                        resultStack.getTags().forEach(tk -> {
+                            String rl = tk.location().toString().toLowerCase(Locale.ROOT);
+                            String path = tk.location().getPath().toLowerCase(Locale.ROOT);
+                            String[] segments = path.split("/");
+                            for (String needle : requestedTags) {
+                                if (needle.contains(":")) {
+                                    if (rl.contains(needle)) { matched.add(rl); break; }
+                                } else {
+                                    for (String seg : segments) {
+                                        if (AdvancedSearchQuery.matchesTagSegment(seg, needle)) { matched.add(rl); break; }
+                                    }
+                                    if (matched.size() > 0 && matched.get(matched.size()-1).equals(rl)) break; // already matched this tag
+                                }
+                            }
+                        });
+                        if (!matched.isEmpty()) {
+                            tooltip.add(Component.literal("Tags:").withStyle(ChatFormatting.GRAY));
+                            // Limit to first 5 to avoid huge tooltips; show +n if truncated
+                            int limit = 5;
+                            int shown = Math.min(limit, matched.size());
+                            for (int j = 0; j < shown; j++) {
+                                tooltip.add(Component.literal(" • " + matched.get(j)).withStyle(ChatFormatting.DARK_GRAY));
+                            }
+                            if (matched.size() > limit) {
+                                tooltip.add(Component.literal("   +" + (matched.size()-limit) + " more").withStyle(ChatFormatting.DARK_GRAY));
+                            }
+                        }
+                    }
+                }
                 tooltip.add(Component.literal("Right Click to Favorite").withStyle(ChatFormatting.YELLOW));
-
                 if (Minecraft.getInstance().options.advancedItemTooltips) {
                     tooltip.add(Component.literal("Recipe ID: " + recipe.id()).withStyle(ChatFormatting.DARK_GRAY));
                 }
-
-                if (hasShiftDown()) {
-                    tooltip.add(Component.literal("SHIFT to craft as many as possible!").withStyle(ChatFormatting.RED));
+                // Debug: show first matched expression and excerpt of matching line when CTRL held
+                if (hasControlDown() && !lastSearchText.isEmpty()) {
+                    // Re-run query match context quickly to extract first match line (basic + optionally advanced if config/prefix)
+                    Minecraft mc2 = Minecraft.getInstance();
+                    MatchContext dbgCtx = new MatchContext(recipe.id(), resultStack, mc2);
+                    // Build query again (cheap) to populate firstMatchedExpression side effect
+                    AdvancedSearchQuery q = AdvancedSearchQuery.parse(lastSearchText);
+                    q.matches(recipe);
+                    if (dbgCtx.firstMatchedExpression != null) {
+                        tooltip.add(Component.literal("Matched: " + dbgCtx.firstMatchedExpression).withStyle(ChatFormatting.GRAY));
+                    }
                 }
 
+                // Always show shift crafting info
+                {
+                    int cappedCrafts = serverCappedCrafts.getOrDefault(recipe.id(), -1);
+                    int rawCrafts = serverRawCrafts.getOrDefault(recipe.id(), cappedCrafts);
+                    boolean unknown = cappedCrafts < 0; // lazy mode sentinel
+                    ShiftEstimate est = unknown ? estimateShiftCraftOutputDetailed(recipe.value()) : estimateFromServer(recipe.value(), cappedCrafts);
+                    boolean hasAlt = hasAltDown();
+                    boolean hasShift = hasShiftDown() && !hasAlt;
+
+                    ChatFormatting baseColor = hasShift ? ChatFormatting.GOLD : ChatFormatting.DARK_GRAY;
+                    if (est.totalItems > 0) {
+                        boolean isCapped = cappedCrafts >= CRAFT_CAP && rawCrafts > cappedCrafts;
+                        int perCraft = Math.max(1, recipe.value().getResultItem(Minecraft.getInstance().level.registryAccess()).getCount());
+                        long cappedOutput = (long) cappedCrafts * perCraft;
+                        long rawOutput = (long) rawCrafts * perCraft;
+                        if (unknown) {
+                            tooltip.add(Component.literal("SHIFT: ~" + est.crafts + "x -> ~" + est.totalItems + " items (local est)").withStyle(baseColor));
+                        } else if (isCapped) {
+                            tooltip.add(Component.literal("SHIFT: " + cappedCrafts + "x (cap) of " + rawCrafts + "x -> " + cappedOutput + "/" + rawOutput + " items").withStyle(baseColor));
+                        } else {
+                            tooltip.add(Component.literal("SHIFT: " + est.crafts + "x -> " + est.totalItems + " items").withStyle(baseColor));
+                        }
+                        long outputForThreshold = (long) (unknown ? est.crafts : rawCrafts) * perCraft;
+                        if (outputForThreshold >= LARGE_CRAFT_CONFIRM_THRESHOLD && hasShift) {
+                            if (pendingLargeCraft != null && recipe.id().equals(pendingLargeCraft) && System.currentTimeMillis() < pendingLargeCraftExpiresAt) {
+                                tooltip.add(Component.literal(" Shift-click again to confirm large craft").withStyle(ChatFormatting.DARK_RED));
+                            } else {
+                                tooltip.add(Component.literal(" Shift-click arms first (output >" + LARGE_CRAFT_CONFIRM_THRESHOLD + ")").withStyle(ChatFormatting.RED));
+                            }
+                        }
+                    } else {
+                        tooltip.add(Component.literal(unknown ? "SHIFT: ~0 (local est)" : "SHIFT: 0 (missing ingredients)").withStyle(baseColor));
+                    }
+                }
+                // Always show alt info
+                tooltip.add(Component.literal("ALT: fill partial stack / one stack").withStyle(hasAltDown() ? ChatFormatting.GOLD : ChatFormatting.DARK_GRAY));
+
                 guiGraphics.renderTooltip(font, tooltip, Optional.empty(), mouseX, mouseY);
+            }
+        }
+
+        // Batch request counts for visible recipes still unknown (-1) with debounce (100 ms)
+        long now = System.currentTimeMillis();
+        if (now - lastRequestMillis > 100) {
+            List<ResourceLocation> need = new ArrayList<>();
+            for (int i = 0; i < recipes.size(); i++) {
+                int row = i / VISIBLE_COLS;
+                if (row < scrollOffset || row >= scrollOffset + VISIBLE_ROWS) continue;
+                RecipeHolder<?> rh = recipes.get(i);
+                ResourceLocation id = rh.id();
+                int cap = serverCappedCrafts.getOrDefault(id, -1);
+                if (cap < 0 && !pendingRequests.contains(id)) {
+                    need.add(id);
+                }
+            }
+            if (!need.isEmpty()) {
+                pendingRequests.addAll(need);
+                lastRequestMillis = now;
+                net.neoforged.neoforge.network.PacketDistributor.sendToServer(new com.benbenlaw.smartcrafting.networking.payload.RequestRecipeCountsPayload(need, inventoryVersion));
             }
         }
 
@@ -647,14 +878,47 @@ public class SmartCraftingScreen extends AbstractContainerScreen<SmartCraftingMe
                         mouseY >= iconY && mouseY <= iconY + ICON_SIZE) {
 
                     var recipeId = filteredRecipes.get(i).id();
-                    selectedRecipeId = recipeId;
-
-                    moveSelectedRecipeToFront();
-                    scrollOffset = 0;  // Scroll to top
-
                     assert Minecraft.getInstance().player != null;
-                    boolean isShiftClick = hasShiftDown();
-                    PacketDistributor.sendToServer(new SmartCraftingRecipeClickPayload(recipeId, isShiftClick));
+                    boolean altHeld = hasAltDown();
+                    // Alt overrides shift semantics: if Alt is held, treat as non-shift for purposes of unlimited crafting & confirmation
+                    boolean isShiftClick = hasShiftDown() && !altHeld;
+                    boolean willCraft = true; // assume crafting unless we arm confirmation
+
+                    if (isShiftClick) {
+                        int cappedCrafts = serverCappedCrafts.getOrDefault(recipeId, -1);
+                        int rawCrafts = serverRawCrafts.getOrDefault(recipeId, cappedCrafts);
+                        int perCraft = 1;
+                        if (Minecraft.getInstance().level != null) {
+                            ItemStack res = filteredRecipes.get(i).value().getResultItem(Minecraft.getInstance().level.registryAccess());
+                            if (!res.isEmpty()) perCraft = Math.max(1, res.getCount());
+                        }
+                        long potentialOutput = (long) rawCrafts * perCraft;
+                        if (potentialOutput >= LARGE_CRAFT_CONFIRM_THRESHOLD) {
+                            long now = System.currentTimeMillis();
+                            if (pendingLargeCraft == null || !pendingLargeCraft.equals(recipeId) || now > pendingLargeCraftExpiresAt) {
+                                // Arm confirmation instead of sending packet; do NOT reorder yet.
+                                pendingLargeCraft = recipeId;
+                                pendingLargeCraftExpiresAt = now + 3000; // 3 second window
+                                willCraft = false;
+                            } else {
+                                // Second click within window -> proceed and clear
+                                pendingLargeCraft = null;
+                                pendingLargeCraftExpiresAt = 0L;
+                            }
+                        }
+                    }
+
+                    if (!willCraft) {
+                        // Optionally highlight selection without moving list order: just remember id
+                        selectedRecipeId = recipeId; // keep visible highlighting if already in view
+                        return true;
+                    }
+
+                    // Actual craft: now update selection & ordering
+                    selectedRecipeId = recipeId;
+                    moveSelectedRecipeToFront();
+                    scrollOffset = 0;
+                    PacketDistributor.sendToServer(new SmartCraftingRecipeClickPayload(recipeId, isShiftClick, altHeld));
                     return true;
                 }
             }
@@ -752,6 +1016,406 @@ public class SmartCraftingScreen extends AbstractContainerScreen<SmartCraftingMe
                                 .withStyle(ChatFormatting.WHITE), mouseX, mouseY);
 
             }
+        }
+    }
+
+    private record ShiftEstimate(int crafts, int totalItems) {}
+
+    private ShiftEstimate estimateFromServer(Recipe<?> recipe, int serverMaxCrafts) {
+        if (Minecraft.getInstance().level == null) return new ShiftEstimate(0,0);
+        ItemStack result = recipe.getResultItem(Minecraft.getInstance().level.registryAccess());
+        if (result.isEmpty()) return new ShiftEstimate(0,0);
+        int perCraft = Math.max(1, result.getCount());
+        long total = (long) perCraft * serverMaxCrafts;
+        if (total > Integer.MAX_VALUE) total = Integer.MAX_VALUE;
+        return new ShiftEstimate(serverMaxCrafts, (int) total);
+    }
+
+    private ShiftEstimate estimateShiftCraftOutputDetailed(Recipe<?> recipe) {
+        // Robust estimation: include all menu slots (covers player inventory + any exposed storage) and
+        // correctly aggregate duplicate ingredient requirements. Still client-side only (may differ from server aggregation).
+        if (Minecraft.getInstance().player == null || Minecraft.getInstance().level == null) return new ShiftEstimate(0,0);
+        ItemStack result = recipe.getResultItem(Minecraft.getInstance().level.registryAccess());
+        if (result.isEmpty()) return new ShiftEstimate(0,0);
+        List<Ingredient> rawIngredients = recipe.getIngredients();
+        if (rawIngredients.isEmpty()) return new ShiftEstimate(0,0);
+
+        int perCraft = Math.max(1, result.getCount());
+
+        // Group identical logical ingredients by a signature of their possible items so we account for multi-count requirements.
+        record IngGroup(String signature, List<Ingredient> members, Ingredient representative, int requiredCount) {}
+        Map<String, List<Ingredient>> grouped = new HashMap<>();
+        for (Ingredient ing : rawIngredients) {
+            if (ing == null || ing.isEmpty()) continue;
+            String sig = ingredientSignature(ing);
+            grouped.computeIfAbsent(sig, k -> new ArrayList<>()).add(ing);
+        }
+        if (grouped.isEmpty()) return new ShiftEstimate(0,0);
+
+        List<IngGroup> groups = new ArrayList<>();
+        for (Map.Entry<String, List<Ingredient>> e : grouped.entrySet()) {
+            groups.add(new IngGroup(e.getKey(), e.getValue(), e.getValue().getFirst(), e.getValue().size()));
+        }
+
+        int craftsPossible = Integer.MAX_VALUE;
+
+        // Build a snapshot of accessible item stacks (avoid double counting by just iterating menu slots once)
+        // Note: Player inventory slots are also in menu.slots, so we don't separately iterate player inventory.
+        List<ItemStack> accessible = this.menu.slots.stream()
+                .filter(slot -> slot.hasItem())
+                .map(slot -> slot.getItem())
+                .toList();
+
+        for (IngGroup g : groups) {
+            int available = 0;
+            for (ItemStack stack : accessible) {
+                if (stack.isEmpty()) continue;
+                if (g.representative().test(stack)) {
+                    // Treat likely catalyst/non-consumed items specially: if item has a crafting remaining item equal to itself
+                    // or is damageable (tool), count only 1 regardless of its current count, since it isn't fully consumed.
+                    boolean catalystLike = false;
+                    ItemStack rem = stack.getCraftingRemainingItem();
+                    if (!rem.isEmpty() && ItemStack.isSameItemSameComponents(rem, stack)) catalystLike = true;
+                    if (stack.isDamageableItem()) catalystLike = true;
+                    if (catalystLike) {
+                        available += 999999; // effectively infinite for estimation purposes.
+                    } else {
+                        available += stack.getCount();
+                    }
+                }
+            }
+            if (available <= 0) {
+                // If any ingredient group reports zero, crafting not possible.
+                return new ShiftEstimate(0,0);
+            }
+            // For catalyst-like groups (treated as large number), division will yield large craftsPossible but we'll clamp later.
+            craftsPossible = Math.min(craftsPossible, available / g.requiredCount());
+            if (craftsPossible <= 0) return new ShiftEstimate(0,0);
+        }
+
+        if (craftsPossible == Integer.MAX_VALUE) return new ShiftEstimate(0,0);
+        // Apply a soft cap to avoid absurd numbers if catalyst set inflated availability.
+        craftsPossible = Math.min(craftsPossible, 4096); // mirrors server safety cap logic
+        long totalItems = (long) craftsPossible * perCraft;
+        if (totalItems > Integer.MAX_VALUE) totalItems = Integer.MAX_VALUE;
+        return new ShiftEstimate(craftsPossible, (int) totalItems);
+    }
+
+    private String ingredientSignature(Ingredient ing) {
+        // Deterministic signature of ingredient's possible item resource locations.
+        ItemStack[] stacks = ing.getItems();
+        if (stacks.length == 0) {
+            // Fallback: use identity hash to differentiate empties (not ideal but stable enough client-side).
+            return "empty:" + System.identityHashCode(ing);
+        }
+        return Arrays.stream(stacks)
+                .filter(Objects::nonNull)
+                .map(s -> {
+                    ResourceLocation key = net.minecraft.core.registries.BuiltInRegistries.ITEM.getKey(s.getItem());
+                    return key == null ? "unknown" : key.toString();
+                })
+                .sorted()
+                .collect(Collectors.joining("|"));
+    }
+
+    /* ===================== Advanced Search System ===================== */
+    private static class AdvancedSearchQuery {
+        // Top-level: OR across conjunctions separated by a standalone '|'
+        private final List<Conjunction> disjunctions; // if empty => match all
+        private AdvancedSearchQuery(List<Conjunction> disjunctions) { this.disjunctions = disjunctions; }
+
+        static AdvancedSearchQuery parse(String raw) {
+            String trimmed = raw.trim();
+            if (trimmed.isEmpty()) return new AdvancedSearchQuery(List.of());
+            List<String> tokens = tokenize(trimmed);
+            List<Conjunction> disj = new ArrayList<>();
+            List<List<SearchCondition>> currentGroups = new ArrayList<>();
+            for (String rawToken : tokens) {
+                String token = rawToken;
+                if (token.isEmpty()) continue;
+                if (token.equals("|")) { // finalize current conjunction
+                    if (!currentGroups.isEmpty()) {
+                        disj.add(new Conjunction(currentGroups));
+                        currentGroups = new ArrayList<>();
+                    }
+                    continue;
+                }
+                List<SearchCondition> orList = new ArrayList<>();
+                if (token.indexOf(' ') >= 0) {
+                    // Phrase token (may include spaces) - treat as single search part
+                    orList.add(parsePart(token));
+                } else {
+                    for (String part : token.split("\\|")) {
+                        if (part.isEmpty()) continue;
+                        orList.add(parsePart(part));
+                    }
+                }
+                if (!orList.isEmpty()) currentGroups.add(orList);
+            }
+            if (!currentGroups.isEmpty()) disj.add(new Conjunction(currentGroups));
+            return new AdvancedSearchQuery(disj);
+        }
+
+        // Tokenization supporting quoted phrases ("...") that may include spaces and pipes.
+        // Quotes are stripped. A standalone | (surrounded by whitespace or as its own token) becomes separate token.
+        static List<String> tokenize(String raw) {
+            List<String> tokens = new ArrayList<>();
+            StringBuilder current = new StringBuilder();
+            boolean inQuotes = false;
+            for (int i = 0; i < raw.length(); i++) {
+                char c = raw.charAt(i);
+                if (c == '"') {
+                    inQuotes = !inQuotes;
+                    continue; // drop quote
+                }
+                if (!inQuotes) {
+                    if (Character.isWhitespace(c)) {
+                        if (current.length() > 0) {
+                            tokens.add(current.toString());
+                            current.setLength(0);
+                        }
+                        continue;
+                    }
+                    if (c == '|') {
+                        if (current.length() > 0) {
+                            tokens.add(current.toString());
+                            current.setLength(0);
+                        }
+                        tokens.add("|");
+                        continue;
+                    }
+                }
+                current.append(c);
+            }
+            if (current.length() > 0) tokens.add(current.toString());
+            // Lowercase normalization (except inside quotes already appended)
+            for (int i = 0; i < tokens.size(); i++) tokens.set(i, tokens.get(i));
+            return tokens;
+        }
+
+        private static SearchCondition parsePart(String partRaw) {
+            String part = partRaw.toLowerCase(Locale.ROOT);
+            boolean negative = false;
+            while (part.startsWith("!") || part.startsWith("-")) { // negation support (leading chain)
+                negative = true;
+                part = part.substring(1);
+            }
+            // Explicit recipe namespace: @r:modid
+            if (part.startsWith("@r:")) {
+                String mod = part.substring(4).trim();
+                SearchCondition base = ctx -> ctx.recipeId.getNamespace().contains(mod);
+                return negative ? ctx -> !base.test(ctx) : base;
+            }
+            // Default @ = output namespace
+            if (part.startsWith("@")) {
+                String mod = part.substring(1).trim();
+                SearchCondition base = ctx -> ctx.matchesModToken(mod);
+                return negative ? ctx -> !base.test(ctx) : base;
+            }
+            // Tooltip search
+            if (part.startsWith("#")) {
+                boolean includeAdvanced = false;
+                if (part.startsWith("#!")) { // #!keyword => include advanced lines
+                    includeAdvanced = true;
+                    part = part.substring(2);
+                } else {
+                    part = part.substring(1);
+                }
+                String needle = part.trim();
+                if (needle.isEmpty()) {
+                    SearchCondition base = ctx -> false;
+                    return negative ? ctx -> !base.test(ctx) : base;
+                }
+                String finalNeedle = needle;
+                boolean finalIncludeAdvanced = includeAdvanced;
+                SearchCondition base = ctx -> {
+                    List<String> lines = finalIncludeAdvanced ? ctx.tooltipAdvancedLower() : ctx.tooltipBasicLower();
+                    for (String line : lines) if (line.contains(finalNeedle)) return true;
+                    return false;
+                };
+                return negative ? ctx -> !base.test(ctx) : base;
+            }
+            // Item ID (resource location)
+            if (part.startsWith("&")) {
+                String id = part.substring(1);
+                SearchCondition base = ctx -> ctx.outputId.contains(id);
+                return negative ? ctx -> !base.test(ctx) : base;
+            }
+            // Tag (ore dictionary style) -> search any item tag key path or namespace
+            if (part.startsWith("$")) {
+                String tagNeedle = part.substring(1).toLowerCase(Locale.ROOT).trim();
+                SearchCondition base = ctx -> ctx.tags().stream().anyMatch(tk -> {
+                    ResourceLocation loc = tk.location();
+                    String ns = loc.getNamespace().toLowerCase(Locale.ROOT);
+                    String path = loc.getPath().toLowerCase(Locale.ROOT);
+                    if (tagNeedle.isEmpty()) return false;
+                    // If user specifies namespace explicitly (contains ':'), do simple substring match
+                    if (tagNeedle.contains(":")) {
+                        return (ns + ":" + path).contains(tagNeedle);
+                    }
+                    // Namespace NOT searched unless explicitly typed; focus on path segments
+                    String[] segments = path.split("/");
+                    for (String seg : segments) {
+                        if (matchesTagSegment(seg, tagNeedle)) return true;
+                    }
+                    return false;
+                });
+                return negative ? ctx -> !base.test(ctx) : base;
+            }
+            // Creative tab lookup
+            if (part.startsWith("%")) {
+                String tab = part.substring(1);
+                SearchCondition base = ctx -> ctx.creativeTabs().stream().anyMatch(s -> s.contains(tab));
+                return negative ? ctx -> !base.test(ctx) : base;
+            }
+            // Plain name search on output display name
+            String nameNeedle = part;
+            SearchCondition base = ctx -> ctx.outputName.contains(nameNeedle);
+            return negative ? ctx -> !base.test(ctx) : base;
+        }
+
+        private static boolean matchesTagSegment(String segment, String needle) {
+            if (segment.equals(needle)) return true; // exact
+            // common plural/singular leniency
+            if (segment.endsWith("s") && segment.substring(0, segment.length()-1).equals(needle)) return true;
+            if (needle.endsWith("s") && needle.substring(0, needle.length()-1).equals(segment)) return true;
+            // allow hyphen/underscore unification
+            String normSeg = segment.replace('-', '_');
+            String normNeedle = needle.replace('-', '_');
+            if (normSeg.equals(normNeedle)) return true;
+            // partial but only if segment starts with needle (avoid mid-word like 'forge' containing 'ore')
+            return normSeg.startsWith(normNeedle);
+        }
+
+        boolean matches(RecipeHolder<?> holder) {
+            if (disjunctions.isEmpty()) return true; // no constraints
+            Minecraft mc = Minecraft.getInstance();
+            if (mc.level == null) return false;
+            ItemStack out = holder.value().getResultItem(mc.level.registryAccess());
+            if (out.isEmpty()) return false;
+            MatchContext ctx = new MatchContext(holder.id(), out, mc);
+            // OR across conjunctions
+            for (Conjunction conj : disjunctions) {
+                if (conj.matches(ctx)) return true;
+            }
+            return false;
+        }
+        private record Conjunction(List<List<SearchCondition>> groups) {
+            boolean matches(MatchContext ctx) {
+                if (groups.isEmpty()) return true; // empty conjunction vacuously true
+                for (List<SearchCondition> group : groups) { // AND across groups
+                    boolean any = false;
+                    for (SearchCondition cond : group) {
+                        if (cond.test(ctx)) { if (ctx.firstMatchedExpression == null) ctx.firstMatchedExpression = cond.toString(); any = true; break; }
+                    }
+                    if (!any) return false; // this AND group failed
+                }
+                return true;
+            }
+        }
+    }
+
+    @FunctionalInterface
+    private interface SearchCondition { boolean test(MatchContext ctx); }
+
+    private static class MatchContext {
+        final ResourceLocation recipeId;
+        final ItemStack output;
+        final String outputId;
+        final String outputMod;
+    final String outputName;
+    final String outputModDisplay; // display name (lowercase) if available
+    final String outputModDisplaySanitized; // punctuation stripped
+        final Minecraft mc;
+        List<Component> tooltipCache;
+        List<Component> tooltipBasicCache;
+        List<Component> tooltipAdvancedCache;
+        List<String> tooltipBasicLowerCache;
+        List<String> tooltipAdvancedLowerCache;
+        List<String> creativeTabsCache;
+        List<TagKey<net.minecraft.world.item.Item>> tagCache;
+        String firstMatchedExpression;
+        MatchContext(ResourceLocation rid, ItemStack output, Minecraft mc) {
+            this.recipeId = rid;
+            this.output = output;
+            this.mc = mc;
+            ResourceLocation key = net.minecraft.core.registries.BuiltInRegistries.ITEM.getKey(output.getItem());
+            this.outputId = key == null ? "" : key.toString().toLowerCase(Locale.ROOT);
+            this.outputMod = key == null ? "" : key.getNamespace().toLowerCase(Locale.ROOT);
+            this.outputName = output.getHoverName().getString().toLowerCase(Locale.ROOT);
+            String disp = null;
+            try {
+                var opt = ModList.get().getModContainerById(this.outputMod);
+                if (opt.isPresent()) {
+                    disp = opt.get().getModInfo().getDisplayName();
+                }
+            } catch (Throwable ignored) {}
+            if (disp == null) disp = this.outputMod; // fallback to mod id
+            disp = disp.toLowerCase(Locale.ROOT);
+            this.outputModDisplay = disp;
+            this.outputModDisplaySanitized = disp.replace("'", "").replace("\"", "");
+        }
+        boolean matchesModToken(String token) {
+            if (token.isEmpty()) return false;
+            if (outputMod.contains(token)) return true;
+            if (outputModDisplay.contains(token)) return true;
+            return outputModDisplaySanitized.contains(token);
+        }
+        // Legacy combined tooltip (advanced or normal depending on player setting) kept for compatibility
+        List<Component> tooltip() {
+            if (tooltipCache == null) {
+                tooltipCache = new ArrayList<>();
+                try {
+                    var ctx = net.minecraft.world.item.Item.TooltipContext.of(mc.level);
+                    tooltipCache.addAll(output.getTooltipLines(ctx, mc.player, mc.options.advancedItemTooltips ? TooltipFlag.Default.ADVANCED : TooltipFlag.Default.NORMAL));
+                } catch (Throwable ignored) { }
+            }
+            return tooltipCache;
+        }
+        List<Component> tooltipBasic() {
+            if (tooltipBasicCache == null) {
+                tooltipBasicCache = new ArrayList<>();
+                try {
+                    var ctx = net.minecraft.world.item.Item.TooltipContext.of(mc.level);
+                    tooltipBasicCache.addAll(output.getTooltipLines(ctx, mc.player, TooltipFlag.Default.NORMAL));
+                } catch (Throwable ignored) { }
+            }
+            return tooltipBasicCache;
+        }
+        List<Component> tooltipAdvanced() {
+            if (tooltipAdvancedCache == null) {
+                tooltipAdvancedCache = new ArrayList<>();
+                try {
+                    var ctx = net.minecraft.world.item.Item.TooltipContext.of(mc.level);
+                    tooltipAdvancedCache.addAll(output.getTooltipLines(ctx, mc.player, TooltipFlag.Default.ADVANCED));
+                } catch (Throwable ignored) { }
+            }
+            return tooltipAdvancedCache;
+        }
+        List<String> tooltipBasicLower() {
+            if (tooltipBasicLowerCache == null) {
+                tooltipBasicLowerCache = tooltipBasic().stream().map(c -> c.getString().toLowerCase(Locale.ROOT)).toList();
+            }
+            return tooltipBasicLowerCache;
+        }
+        List<String> tooltipAdvancedLower() {
+            if (tooltipAdvancedLowerCache == null) {
+                tooltipAdvancedLowerCache = tooltipAdvanced().stream().map(c -> c.getString().toLowerCase(Locale.ROOT)).toList();
+            }
+            return tooltipAdvancedLowerCache;
+        }
+        List<String> creativeTabs() {
+            if (creativeTabsCache == null) {
+                // Placeholder: creative tab API changed; fallback to empty list until proper integration added.
+                creativeTabsCache = List.of();
+            }
+            return creativeTabsCache;
+        }
+        List<TagKey<net.minecraft.world.item.Item>> tags() {
+            if (tagCache == null) {
+                tagCache = output.getTags().toList();
+            }
+            return tagCache;
         }
     }
 }

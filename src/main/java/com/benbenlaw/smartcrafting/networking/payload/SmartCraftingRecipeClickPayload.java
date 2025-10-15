@@ -7,7 +7,7 @@ import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 import net.minecraft.resources.ResourceLocation;
 
-public record SmartCraftingRecipeClickPayload(ResourceLocation recipeID, boolean isShifting) implements CustomPacketPayload {
+public record SmartCraftingRecipeClickPayload(ResourceLocation recipeID, boolean isShifting, boolean isAlt) implements CustomPacketPayload {
 
     public static final Type<SmartCraftingRecipeClickPayload> TYPE = new Type<>(
             ResourceLocation.fromNamespaceAndPath(SmartCrafting.MOD_ID, "smart_crafting_recipe_click")
@@ -19,11 +19,13 @@ public record SmartCraftingRecipeClickPayload(ResourceLocation recipeID, boolean
     }
 
     public static final StreamCodec<FriendlyByteBuf, SmartCraftingRecipeClickPayload> STREAM_CODEC = StreamCodec.composite(
-            ResourceLocation.STREAM_CODEC,
-            SmartCraftingRecipeClickPayload::recipeID,
-            ByteBufCodecs.BOOL,
-            SmartCraftingRecipeClickPayload::isShifting,
-            SmartCraftingRecipeClickPayload::new
+        ResourceLocation.STREAM_CODEC,
+        SmartCraftingRecipeClickPayload::recipeID,
+        ByteBufCodecs.BOOL,
+        SmartCraftingRecipeClickPayload::isShifting,
+        ByteBufCodecs.BOOL,
+        SmartCraftingRecipeClickPayload::isAlt,
+        SmartCraftingRecipeClickPayload::new
     );
 }
 

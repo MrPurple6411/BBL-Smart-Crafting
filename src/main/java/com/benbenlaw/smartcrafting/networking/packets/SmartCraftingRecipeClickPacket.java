@@ -17,7 +17,7 @@ public record SmartCraftingRecipeClickPacket() {
         ServerPlayer player = (ServerPlayer) context.player();
 
         if (player.containerMenu instanceof SmartCraftingMenu menu) {
-            menu.craftRecipeById(payload.recipeID(), payload.isShifting());
+            menu.craftRecipeById(payload.recipeID(), payload.isShifting(), payload.isAlt());
         }
     }
 }
