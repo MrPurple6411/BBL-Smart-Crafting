@@ -1,9 +1,6 @@
 package com.benbenlaw.smartcrafting.config;
 
-import net.neoforged.fml.common.Mod;
 import net.neoforged.neoforge.common.ModConfigSpec;
-
-import java.util.List;
 
 public class SmartCraftingConfig {
 
@@ -14,6 +11,7 @@ public class SmartCraftingConfig {
     public static final ModConfigSpec.ConfigValue<Boolean> debugMaxCrafts;
     public static final ModConfigSpec.ConfigValue<Boolean> lazyCounts;
     public static final ModConfigSpec.ConfigValue<Boolean> enableAdvancedByDefault;
+    public static final ModConfigSpec.ConfigValue<Boolean> enableRecursiveCrafting;
 
     static {
         BUILDER.push("Smart Crafting Config");
@@ -37,6 +35,10 @@ public class SmartCraftingConfig {
     enableAdvancedByDefault = BUILDER
         .comment("If true, # searches include advanced tooltip lines without requiring #! prefix. Default false.")
         .define("enableAdvancedByDefault", false);
+
+    enableRecursiveCrafting = BUILDER
+        .comment("If true, enables recursive crafting to show items that can be crafted from other items that are themselves craftable. Default false.")
+        .define("enableRecursiveCrafting", false);
 
         BUILDER.pop();
         SPEC = BUILDER.build();
